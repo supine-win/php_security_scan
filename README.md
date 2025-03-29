@@ -86,6 +86,16 @@ php-security-scan /path/to/php/directory --non-interactive
 > **注意：** 通过curl管道方式运行脚本时，工具会自动使用非交互模式(默认只启用编码后命令执行特征)。您可以使用以下两种方式启用交互式特征选择：
 > 1. 添加`--force-interactive`参数强制交互模式（请注意部分终端可能无法正常输入）
 > 2. 先下载脚本到本地，然后运行（推荐方式）
+>
+> **方法二：两步下载和运行（最可靠）：**
+> ```bash
+> # 步骤1：下载脚本到本地
+> curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/run.sh -o scan.sh
+> chmod +x scan.sh
+> 
+> # 步骤2：交互式运行
+> ./scan.sh /path/to/php/directory
+> ```
 
 ```bash
 # Gitee源(推荐) - 基本用法（默认只启用第一个特征）
