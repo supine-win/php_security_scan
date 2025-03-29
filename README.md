@@ -83,7 +83,9 @@ php-security-scan /path/to/php/directory --non-interactive
 
 如果您只需要运行一次扫描，可以使用以下命令直接从云端获取脚本并执行：
 
-> **注意：** 通过curl管道方式运行脑本时，工具会自动使用非交互模式(默认只启用编码后命令执行特征)。如需使用交互式特征选择，请选用法一或用法二。
+> **注意：** 通过curl管道方式运行脚本时，工具会自动使用非交互模式(默认只启用编码后命令执行特征)。您可以使用以下两种方式启用交互式特征选择：
+> 1. 添加`--force-interactive`参数强制交互模式（请注意部分终端可能无法正常输入）
+> 2. 先下载脚本到本地，然后运行（推荐方式）
 
 ```bash
 # Gitee源(推荐) - 基本用法（默认只启用第一个特征）
@@ -94,6 +96,9 @@ curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/run.sh | sh -s
 
 # Gitee源 - 使用特定特征ID进行扫描（推荐方式）
 curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/run.sh | sh -s -- /path/to/php/directory -p 1,3,5
+
+# Gitee源 - 强制交互式特征选择
+curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/run.sh | sh -s -- /path/to/php/directory --force-interactive
 
 # GitHub源 - 基本用法
 curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/run.sh | sh -s -- /path/to/php/directory

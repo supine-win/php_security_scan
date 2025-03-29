@@ -52,19 +52,38 @@ fi
 
 chmod +x "$TEMP_DIR/main.py"
 
+# 检查参数中是否有--force-interactive
+force_interactive=false
+for arg in "$@"; do
+    if [ "$arg" = "--force-interactive" ]; then
+        force_interactive=true
+        # 从参数中移除--force-interactive
+        set -- $(echo "$@" | sed 's/--force-interactive//')
+        break
+    fi
+done
+
 # 检查是否运行在交互式终端
 is_tty=false
-if [ -t 0 ]; then
+if [ -t 0 ] || [ "$force_interactive" = true ]; then
     is_tty=true
 fi
 
 # 执行扫描
 echo "开始扫描..."
 
+# 如果强制交互，显示特殊提示
+if [ "$force_interactive" = true ]; then
+    echo "[提示] 强制交互模式已启用。请注意在管道环境中可能需要手动输入。"
+    echo "[提示] 如果无法输入，请直接按Ctrl+C取消，然后使用-p参数指定特征。"
+    sleep 2
+fi
+
 # 如果不是交互式终端且没有指定--non-interactive参数
 if [ "$is_tty" = false ] && [[ ! " $* " =~ " --non-interactive " ]]; then
     echo "[注意] 在非交互式环境中运行，自动添加--non-interactive选项，使用默认特征。"
     echo "[提示] 如需指定特征，请使用-p参数，如: -p 1,3,5"
+    echo "[提示] 如需强制交互式选择特征，请添加--force-interactive参数"
     python3 "$TEMP_DIR/main.py" "$SCAN_DIR" --non-interactive "$@"
 else
     python3 "$TEMP_DIR/main.py" "$SCAN_DIR" "$@"
