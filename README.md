@@ -101,3 +101,31 @@ CSV文件包含完整的详细结果，包括：
 
 - 本工具仅检测可能存在的安全漏洞或篡改迹象，结果可能包含误报
 - 建议结合其他安全工具和代码审计一起使用，以获得更全面的安全评估
+
+## 网络连接问题解决方案
+
+如果您使用一键安装或一键运行脚本时遇到网络连接问题（如下载超时或无法访问 GitHub），我们提供了一些解决方案：
+
+1. **使用镜像源**：脚本已经集成了多个备用下载源，会自动尝试备用镜像
+
+2. **手动下载**：如果所有自动方式均失败，您可以：
+
+   ```bash
+   # 手动下载脚本文件
+   git clone https://github.com/supine-win/php_security_scan.git
+   cd php_security_scan
+   python main.py /path/to/php/directory
+   ```
+
+3. **设置代理**：如果您在网络受限的环境中，可以设置代理：
+
+   ```bash
+   # 设置 HTTP 代理
+   export http_proxy=http://your-proxy:port
+   export https_proxy=http://your-proxy:port
+   
+   # 然后运行脚本
+   curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/run.sh | sh -s -- /path/to/php/directory
+   ```
+
+4. **使用镜像网站**：如果 GitHub 访问受限，可以尝试 Gitee 等镜像网站
