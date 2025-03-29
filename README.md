@@ -83,14 +83,16 @@ php-security-scan /path/to/php/directory --non-interactive
 
 如果您只需要运行一次扫描，可以使用以下命令直接从云端获取脚本并执行：
 
+> **注意：** 通过curl管道方式运行脑本时，工具会自动使用非交互模式(默认只启用编码后命令执行特征)。如需使用交互式特征选择，请选用法一或用法二。
+
 ```bash
-# Gitee源(推荐) - 基本用法
+# Gitee源(推荐) - 基本用法（默认只启用第一个特征）
 curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/run.sh | sh -s -- /path/to/php/directory
 
 # Gitee源 - 指定输出文件
 curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/run.sh | sh -s -- /path/to/php/directory -o my_results.csv
 
-# Gitee源 - 使用特定特征ID进行扫描
+# Gitee源 - 使用特定特征ID进行扫描（推荐方式）
 curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/run.sh | sh -s -- /path/to/php/directory -p 1,3,5
 
 # GitHub源 - 基本用法

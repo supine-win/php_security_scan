@@ -52,8 +52,22 @@ fi
 
 chmod +x "$TEMP_DIR/main.py"
 
+# 检查是否运行在交互式终端
+is_tty=false
+if [ -t 0 ]; then
+    is_tty=true
+fi
+
 # 执行扫描
 echo "开始扫描..."
-python3 "$TEMP_DIR/main.py" "$SCAN_DIR" "$@"
+
+# 如果不是交互式终端且没有指定--non-interactive参数
+if [ "$is_tty" = false ] && [[ ! " $* " =~ " --non-interactive " ]]; then
+    echo "[注意] 在非交互式环境中运行，自动添加--non-interactive选项，使用默认特征。"
+    echo "[提示] 如需指定特征，请使用-p参数，如: -p 1,3,5"
+    python3 "$TEMP_DIR/main.py" "$SCAN_DIR" --non-interactive "$@"
+else
+    python3 "$TEMP_DIR/main.py" "$SCAN_DIR" "$@"
+fi
 
 echo "扫描完成!"
