@@ -1,6 +1,6 @@
 # PHP Security Scanner
 
-这个Python脚本用于扫描PHP文件中可能存在的安全威胁或被篡改的迹象。
+这个Python脚本用于扫描PHP文件中可能存在的安全威胁或被篡改的迹象。支持一键安装和一键运行。
 
 ## 功能特点
 
@@ -27,12 +27,43 @@
 
 ## 使用方法
 
+### 用法一：直接运行下载的源代码
+
 ```bash
 # 基本用法
 python main.py /path/to/php/directory
 
 # 指定输出文件
 python main.py /path/to/php/directory -o output_results.csv
+```
+
+### 用法二：一键安装（永久安装）
+
+在任何有Python 3的Linux服务器上，使用以下命令一键安装：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/install.sh | sh
+```
+
+安装后，您可以使用以下命令运行扫描：
+
+```bash
+php-security-scan /path/to/php/directory
+
+# 指定输出文件
+php-security-scan /path/to/php/directory -o my_results.csv
+```
+
+### 用法三：一键运行（临时使用）
+
+如果您只需要运行一次扫描，可以使用以下命令直接从云端获取脚本并执行：
+
+```bash
+# 基本用法
+curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/run.sh | sh -s -- /path/to/php/directory
+
+# 指定输出文件
+curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/run.sh | sh -s -- /path/to/php/directory -o my_results.csv
 ```
 
 ## 输出示例
