@@ -6,7 +6,7 @@ set -e
 
 # 检查参数
 if [ $# -lt 1 ]; then
-    echo "使用方法: curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/run.sh | sh -s -- /path/to/php/directory [options]"
+    echo "使用方法: curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/run.sh | sh -s -- /path/to/php/directory [options]"
     echo "请提供要扫描的PHP目录路径"
     exit 1
 fi
@@ -27,26 +27,26 @@ echo "正在下载扫描脚本..."
 # 尝试不同的备选下载源
 download_success=false
 
-# 尝试主要下载源
-echo "尝试下载源 1/3: GitHub..."
-curl -m 30 -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/main.py -o "$TEMP_DIR/main.py" && download_success=true
+# 尝试主要下载源（Gitee - 国内速度更快）
+echo "尝试下载源 1/3: Gitee..."
+curl -m 30 -sSL https://gitee.com/supine-win/php_security_scan/raw/main/main.py -o "$TEMP_DIR/main.py" && download_success=true
 
-# 如果失败，尝试备用镜像（这里只是为了示例，需要网站管理员实际架设镜像）
+# 如果失败，尝试JSDelivr CDN
 if [ "$download_success" != "true" ]; then
-    echo "下载失败，尝试备用源 2/3..."
+    echo "下载失败，尝试备用源 2/3: JSDelivr CDN..."
     curl -m 30 -sSL https://cdn.jsdelivr.net/gh/supine-win/php_security_scan@main/main.py -o "$TEMP_DIR/main.py" && download_success=true
 fi
 
-# 如果仍然失败，尝试Gitee镜像（假设已经设置）
+# 如果仍然失败，尝试GitHub源
 if [ "$download_success" != "true" ]; then
-    echo "下载失败，尝试备用源 3/3..."
-    curl -m 30 -sSL https://gitee.com/supine-win/php_security_scan/raw/main/main.py -o "$TEMP_DIR/main.py" && download_success=true
+    echo "下载失败，尝试备用源 3/3: GitHub..."
+    curl -m 30 -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/main.py -o "$TEMP_DIR/main.py" && download_success=true
 fi
 
 # 检查下载是否成功
 if [ "$download_success" != "true" ]; then
     echo "错误: 无法下载扫描脚本。请检查您的网络连接或手动下载脚本。"
-    echo "您可以直接访问 https://github.com/supine-win/php_security_scan 下载完整代码。"
+    echo "您可以直接访问 https://gitee.com/supine-win/php_security_scan 或 https://github.com/supine-win/php_security_scan 下载完整代码。"
     exit 1
 fi
 
