@@ -2,6 +2,11 @@
 
 这个Python脚本用于扫描PHP文件中可能存在的安全威胁或被篡改的迹象。支持一键安装和一键运行。
 
+## 代码仓库
+
+- GitHub: [https://github.com/supine-win/php_security_scan](https://github.com/supine-win/php_security_scan)
+- Gitee（国内镇像）: [https://gitee.com/supine-win/php_security_scan](https://gitee.com/supine-win/php_security_scan)
+
 ## 功能特点
 
 - 递归扫描指定目录中的所有PHP文件
@@ -42,7 +47,11 @@ python main.py /path/to/php/directory -o output_results.csv
 在任何有Python 3的Linux服务器上，使用以下命令一键安装：
 
 ```bash
+# GitHub源
 curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/install.sh | sh
+
+# 或者使用Gitee源（国内用户推荐）
+curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/install.sh | sh
 ```
 
 安装后，您可以使用以下命令运行扫描：
@@ -59,11 +68,17 @@ php-security-scan /path/to/php/directory -o my_results.csv
 如果您只需要运行一次扫描，可以使用以下命令直接从云端获取脚本并执行：
 
 ```bash
-# 基本用法
+# GitHub源 - 基本用法
 curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/run.sh | sh -s -- /path/to/php/directory
 
-# 指定输出文件
+# GitHub源 - 指定输出文件
 curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/run.sh | sh -s -- /path/to/php/directory -o my_results.csv
+
+# Gitee源(国内用户推荐) - 基本用法
+curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/run.sh | sh -s -- /path/to/php/directory
+
+# Gitee源 - 指定输出文件
+curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/run.sh | sh -s -- /path/to/php/directory -o my_results.csv
 ```
 
 ## 输出示例
@@ -106,13 +121,20 @@ CSV文件包含完整的详细结果，包括：
 
 如果您使用一键安装或一键运行脚本时遇到网络连接问题（如下载超时或无法访问 GitHub），我们提供了一些解决方案：
 
-1. **使用镜像源**：脚本已经集成了多个备用下载源，会自动尝试备用镜像
+1. **使用Gitee源**：对于国内用户，强烈推荐使用Gitee源，速度更快，更稳定
 
-2. **手动下载**：如果所有自动方式均失败，您可以：
+2. **使用镜像源**：脚本已经集成了多个备用下载源，会自动尝试备用镜像
+
+3. **手动下载**：如果所有自动方式均失败，您可以：
 
    ```bash
-   # 手动下载脚本文件
+   # 从 GitHub 手动下载
    git clone https://github.com/supine-win/php_security_scan.git
+   cd php_security_scan
+   python main.py /path/to/php/directory
+   
+   # 或者从 Gitee 手动下载(国内推荐)
+   git clone https://gitee.com/supine-win/php_security_scan.git
    cd php_security_scan
    python main.py /path/to/php/directory
    ```
@@ -128,4 +150,4 @@ CSV文件包含完整的详细结果，包括：
    curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/run.sh | sh -s -- /path/to/php/directory
    ```
 
-4. **使用镜像网站**：如果 GitHub 访问受限，可以尝试 Gitee 等镜像网站
+4. **直接使用Gitee**: 我们已在Gitee上提供了完整的项目镜像，国内用户可直接访问 [https://gitee.com/supine-win/php_security_scan](https://gitee.com/supine-win/php_security_scan)
