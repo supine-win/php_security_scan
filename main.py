@@ -154,6 +154,54 @@ SUSPICIOUS_PATTERNS = [
         'type': 'Encoded Data',
         'description': 'Large block of encoded data',
         'default': False
+    },
+    # 输出编码内容 (可能是二阶注入或隐藏的JavaScript)
+    {
+        'id': 17,
+        'pattern': r'(?:echo|print|<?=)\s*(?:base64_decode|str_rot13)\s*\(',
+        'type': 'Encoded Content Output',
+        'description': 'Suspicious output of encoded/obfuscated content',
+        'default': True
+    },
+    # 复杂解码链 (多重解码)
+    {
+        'id': 18,
+        'pattern': r'(?:base64_decode|str_rot13|gzinflate|gzuncompress|gzdecode)\s*\(\s*(?:base64_decode|str_rot13|gzinflate|gzuncompress|gzdecode)',
+        'type': 'Multi-layer Encoding',
+        'description': 'Multiple layers of encoding (common in obfuscated malware)',
+        'default': True
+    },
+    # 包含加密函数的可疑函数
+    {
+        'id': 19,
+        'pattern': r'function\s+[a-zA-Z0-9_]+\s*\([^)]*\)\s*{[^}]*(?:base64_decode|str_rot13|gzinflate)[^}]*}',
+        'type': 'Suspicious Function',
+        'description': 'Function containing encoding/encryption operations',
+        'default': True
+    },
+    # 变量赋值后直接输出编码内容
+    {
+        'id': 20,
+        'pattern': r'\$[a-zA-Z0-9_]+\s*=\s*base64_decode\([^)]+\);\s*(?:echo|print)\s*\$[a-zA-Z0-9_]+',
+        'type': 'Indirect Encoded Output',
+        'description': 'Decode to variable then output (obfuscation technique)',
+        'default': True
+    },
+    # 远程文件执行组合（eval+file_get_contents+base64_decode）
+    {
+        'id': 21,
+        'pattern': r'eval\s*\([^)]*file_get_contents\s*\([^)]*base64_decode\s*\(',
+        'type': 'Remote Code Execution',
+        'description': 'Loading and executing code from encoded remote URL',
+        'default': True
+    },
+    # 禁用错误显示+恶意代码组合（常见隐藏手法）
+    {
+        'id': 22,
+        'pattern': r'(?:ini_set|error_reporting)\s*\([^)]*display_errors[^)]*\)[^;]*;\s*(?:eval|assert|system)',
+        'type': 'Error Hiding + Code Execution',
+        'description': 'Disabling error display before executing suspicious code',
+        'default': True
     }
 ]
 
