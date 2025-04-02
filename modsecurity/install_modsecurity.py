@@ -262,10 +262,31 @@ def install_modsecurity_nginx():
         configure_args = subprocess.check_output("nginx -V", shell=True, stderr=subprocess.STDOUT).decode()
         configure_args = re.search(r'configure arguments: (.*)', configure_args).group(1)
         
-        # 从参数中移除GeoIP相关模块，避免“the GeoIP module requires the GeoIP library”错误
-        configure_args = re.sub(r'--with-http_geoip_module[=\w]*', '', configure_args)
-        configure_args = re.sub(r'--with-stream_geoip_module[=\w]*', '', configure_args)
-        logger.info("已禁用GeoIP模块，避免兼容性问题")
+        # 确保GeoIP库已安装，而不是移除GeoIP模块
+        logger.info("确保安装GeoIP库以支持GeoIP模块...")
+        
+        # 先检测系统类型
+        distro_family = get_distro_family()
+        
+        # 确保安装GeoIP库
+        try:
+            if distro_family == 'debian':
+                geoip_packages = ["libgeoip-dev", "libgeoip1", "geoip-bin"]
+                print(f"+++ 执行: apt-get install -y {' '.join(geoip_packages)} +++")
+                subprocess.run(["apt-get", "install", "-y"] + geoip_packages, check=True)
+                logger.info("已安装Debian/Ubuntu系统的GeoIP库")
+            elif distro_family == 'rhel':
+                geoip_packages = ["GeoIP", "GeoIP-devel", "geoipupdate"]
+                print(f"+++ 执行: yum install -y {' '.join(geoip_packages)} +++")
+                subprocess.run(["yum", "install", "-y"] + geoip_packages, check=True)
+                logger.info("已安装CentOS/RHEL系统的GeoIP库")
+            else:
+                logger.warning("无法识别系统类型，请手动安装GeoIP库")
+                logger.warning("对于Debian/Ubuntu系统，使用: apt-get install -y libgeoip-dev libgeoip1 geoip-bin")
+                logger.warning("对于CentOS/RHEL系统，使用: yum install -y GeoIP GeoIP-devel geoipupdate")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"安装GeoIP库失败: {str(e)}")
+            logger.warning("将尝试继续编译，但可能会遇到GeoIP相关错误")
         
         # 添加ModSecurity模块
         modsec_nginx_path = os.path.join(BUILD_DIR, "modsecurity-nginx")
