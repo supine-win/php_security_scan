@@ -80,7 +80,7 @@ def download_modsecurity():
     os.chdir(BUILD_DIR)
     
     # 设置ModSecurity版本
-    MODSEC_VERSION = "3.0.9"
+    MODSEC_VERSION = "3.0.14"
     
     # 创建下载目录
     modsec_dir = os.path.join(BUILD_DIR, "modsecurity")
@@ -89,16 +89,6 @@ def download_modsecurity():
     
     # 下载预编译的版本
     download_success = False
-    
-    # 尝试从supine-win的Gitee仓库下载预编译版本
-    try:
-        logger.info(f"尝试从supine-win的Gitee镜像下载ModSecurity v{MODSEC_VERSION}...")
-        download_url = f"https://gitee.com/supine-win/ModSecurity/releases/download/v{MODSEC_VERSION}/modsecurity-v{MODSEC_VERSION}-linux-x64.tar.gz"
-        subprocess.run(f"wget -q {download_url} -O modsecurity.tar.gz", shell=True, check=True)
-        download_success = True
-        logger.info("从supine-win的Gitee镜像下载ModSecurity预编译版本成功")
-    except subprocess.CalledProcessError:
-        logger.warning("从supine-win的Gitee镜像下载预编译版本失败，尝试GitHub官方发布版本")
     
     # 如果下载失败，尝试从GitHub下载
     if not download_success:
@@ -110,7 +100,17 @@ def download_modsecurity():
             logger.info("从GitHub下载ModSecurity成功")
         except subprocess.CalledProcessError:
             logger.error("无法下载ModSecurity发布版本")
-            sys.exit(1)
+
+    # 尝试从supine-win的Gitee仓库下载预编译版本
+    try:
+        logger.info(f"尝试从supine-win的Gitee镜像下载ModSecurity v{MODSEC_VERSION}...")
+        download_url = f"https://gitee.com/supine-win/ModSecurity/releases/download/v{MODSEC_VERSION}/modsecurity-v{MODSEC_VERSION}-linux-x64.tar.gz"
+        subprocess.run(f"wget -q {download_url} -O modsecurity.tar.gz", shell=True, check=True)
+        download_success = True
+        logger.info("从supine-win的Gitee镜像下载ModSecurity预编译版本成功")
+    except subprocess.CalledProcessError:
+        logger.warning("从supine-win的Gitee镜像下载预编译版本失败，尝试GitHub官方发布版本")
+        sys.exit(1)
     
     # 解压安装ModSecurity
     try:
