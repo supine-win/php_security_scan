@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 import tempfile
 import argparse
+import glob
 
 # 配置日志
 logging.basicConfig(
@@ -455,8 +456,13 @@ def download_owasp_crs():
     logger.info("下载OWASP ModSecurity核心规则集...")
     os.chdir(BUILD_DIR)
     
-    # 创建CRS目录
-    crs_dir = "/etc/nginx/modsecurity-crs"
+    # 创建CRS目录 - 根据环境选择路径
+    if IS_BT_ENV:
+        crs_dir = "/www/server/nginx/modsecurity-crs"
+    else:
+        crs_dir = "/etc/nginx/modsecurity-crs"
+        
+    logger.info(f"使用CRS规则目录: {crs_dir}")
     os.makedirs(crs_dir, exist_ok=True)
     
     # 优先尝试从supine-win的Gitee镜像下载
@@ -474,7 +480,7 @@ def download_owasp_crs():
                 shutil.copytree(s, d, dirs_exist_ok=True)
             else:
                 shutil.copy2(s, d)
-        logger.info("CRS文件已复制到/etc/nginx/modsecurity-crs/")
+        logger.info(f"CRS文件已复制到{crs_dir}/")
     except subprocess.CalledProcessError:
         logger.warning("从supine-win的镜像下载失败，尝试官方Gitee镜像")
         try:
@@ -491,7 +497,7 @@ def download_owasp_crs():
                     shutil.copytree(s, d, dirs_exist_ok=True)
                 else:
                     shutil.copy2(s, d)
-            logger.info("从Gitee镜像下载的CRS文件已复制到/etc/nginx/modsecurity-crs/")
+            logger.info(f"从Gitee镜像下载的CRS文件已复制到{crs_dir}/")
         except subprocess.CalledProcessError:
             logger.warning("从Gitee镜像下载失败，尝试从GitHub下载")
             try:
@@ -508,7 +514,7 @@ def download_owasp_crs():
                         shutil.copytree(s, d, dirs_exist_ok=True)
                     else:
                         shutil.copy2(s, d)
-                logger.info("从GitHub下载的CRS文件已复制到/etc/nginx/modsecurity-crs/")
+                logger.info(f"从GitHub下载的CRS文件已复制到{crs_dir}/")
             except subprocess.CalledProcessError:
                 logger.error("下载CRS失败")
                 sys.exit(1)
@@ -533,13 +539,52 @@ def configure_modsecurity():
     logger.info("配置ModSecurity...")
     
     # 创建ModSecurity配置目录
-    modsec_dir = "/etc/nginx/modsecurity"
+    if IS_BT_ENV:
+        modsec_dir = "/www/server/nginx/modsecurity"
+    else:
+        modsec_dir = "/etc/nginx/modsecurity"
+    
+    logger.info(f"使用ModSecurity配置目录: {modsec_dir}")
     os.makedirs(modsec_dir, exist_ok=True)
     
     # 复制默认配置
     modsec_conf_src = os.path.join(BUILD_DIR, "modsecurity/modsecurity.conf-recommended")
     modsec_conf_dst = os.path.join(modsec_dir, "modsecurity.conf")
     shutil.copy(modsec_conf_src, modsec_conf_dst)
+    
+    # 复制unicode.mapping文件
+    unicode_mapping_src = os.path.join(BUILD_DIR, "modsecurity/unicode.mapping")
+    unicode_mapping_dst = os.path.join(modsec_dir, "unicode.mapping")
+    if os.path.exists(unicode_mapping_src):
+        logger.info(f"复制unicode.mapping文件到{modsec_dir}")
+        shutil.copy(unicode_mapping_src, unicode_mapping_dst)
+    else:
+        logger.warning("未找到unicode.mapping文件，尝试从其他目录查找")
+        # 尝试从可能的位置查找
+        possible_paths = [
+            os.path.join(BUILD_DIR, "modsecurity/unicode.mapping"),
+            os.path.join(BUILD_DIR, "modsecurity-*/unicode.mapping"),
+            "/usr/local/modsecurity/unicode.mapping",
+            "/usr/share/modsecurity/unicode.mapping"
+        ]
+        
+        found = False
+        for path_pattern in possible_paths:
+            for path in glob.glob(path_pattern):
+                if os.path.exists(path):
+                    logger.info(f"在{path}找到unicode.mapping文件")
+                    shutil.copy(path, unicode_mapping_dst)
+                    found = True
+                    break
+            if found:
+                break
+                
+        if not found:
+            # 如果仍未找到，创建一个空文件并显示警告
+            logger.error("无法找到unicode.mapping文件，请手动配置")
+            with open(unicode_mapping_dst, 'w') as f:
+                f.write("# This is a placeholder unicode.mapping file\n")
+            logger.warning("创建了一个空的unicode.mapping文件，请手动配置")
     
     # 修改配置以启用ModSecurity
     with open(modsec_conf_dst, 'r') as file:
@@ -553,17 +598,29 @@ def configure_modsecurity():
     
     # 创建include.conf配置
     include_conf = os.path.join(modsec_dir, "include.conf")
+    
+    # 根据环境调整路径
+    if IS_BT_ENV:
+        crs_path = "/www/server/nginx/modsecurity-crs"
+    else:
+        crs_path = "/etc/nginx/modsecurity-crs"
+    
     with open(include_conf, 'w') as file:
-        file.write("""# ModSecurity配置
-Include "/etc/nginx/modsecurity/modsecurity.conf"
-Include "/etc/nginx/modsecurity-crs/crs-setup.conf"
-Include "/etc/nginx/modsecurity-crs/rules/*.conf"
+        file.write(f"""# ModSecurity配置
+Include "{modsec_dir}/modsecurity.conf"
+Include "{crs_path}/crs-setup.conf"
+Include "{crs_path}/rules/*.conf"
 """)
     
     # 创建Nginx ModSecurity配置 - 拆分为两个文件
     
     # 1. 创建加载模块的配置文件（必须在主配置文件的最顶层）
-    modsec_module_conf = "/etc/nginx/modules-enabled/50-mod-http-modsecurity.conf"
+    if IS_BT_ENV:
+        modsec_module_conf = "/www/server/nginx/modules-enabled/50-mod-http-modsecurity.conf"
+    else:
+        modsec_module_conf = "/etc/nginx/modules-enabled/50-mod-http-modsecurity.conf"
+    
+    logger.info(f"使用模块配置文件: {modsec_module_conf}")
     os.makedirs(os.path.dirname(modsec_module_conf), exist_ok=True)
     with open(modsec_module_conf, 'w') as file:
         file.write("""# 加载ModSecurity模块 - 这必须放在主配置文件的顶层
@@ -571,17 +628,24 @@ load_module modules/ngx_http_modsecurity_module.so;
 """)
     
     # 2. 创建实际启用ModSecurity的配置文件（在http块内包含）
-    modsec_nginx_conf = "/etc/nginx/conf.d/modsecurity.conf"
+    if IS_BT_ENV:
+        modsec_nginx_conf = "/www/server/nginx/conf.d/modsecurity.conf"
+    else:
+        modsec_nginx_conf = "/etc/nginx/conf.d/modsecurity.conf"
+        
+    logger.info(f"使用Nginx配置文件: {modsec_nginx_conf}")
+    os.makedirs(os.path.dirname(modsec_nginx_conf), exist_ok=True)
+    
     with open(modsec_nginx_conf, 'w') as file:
-        file.write("""# 在server块内启用ModSecurity
+        file.write(f"""# 在server块内启用ModSecurity
 modsecurity on;
-modsecurity_rules_file /etc/nginx/modsecurity/include.conf;
+modsecurity_rules_file {modsec_dir}/include.conf;
 """)
     
     logger.info("ModSecurity配置完成，请将以下内容添加到您的Nginx主配置文件的顶层:")
-    logger.info("include /etc/nginx/modules-enabled/50-mod-http-modsecurity.conf;")
+    logger.info(f"include {modsec_module_conf};")
     logger.info("并将以下内容添加到http块:")
-    logger.info("include /etc/nginx/conf.d/modsecurity.conf;")
+    logger.info(f"include {modsec_nginx_conf};")
     
     # 重启Nginx
     try:
