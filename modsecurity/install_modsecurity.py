@@ -28,7 +28,17 @@ logger.addHandler(file_handler)
 
 # 全局变量
 BUILD_DIR = os.path.join(tempfile.gettempdir(), "modsecurity_build")
-NGINX_PATH = "/etc/nginx"
+
+# 检测是否为宝塔环境
+IS_BT_ENV = os.path.exists('/www/server/panel') or os.path.exists('/www/server/nginx')
+
+# 根据环境设置Nginx路径
+if IS_BT_ENV:
+    NGINX_PATH = "/www/server/nginx"
+    logger.info(f"检测到宝塔环境，设置Nginx路径为: {NGINX_PATH}")
+else:
+    NGINX_PATH = "/etc/nginx"
+    logger.info(f"标准环境，设置Nginx路径为: {NGINX_PATH}")
 
 # 检测系统类型
 def get_distro_family():
