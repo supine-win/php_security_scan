@@ -595,7 +595,7 @@ def install_dependencies():
     
     try:
         # 捕获过程的输出以进行详细错误分析
-        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         stdout, stderr = process.communicate()
         
         if process.returncode != 0:
@@ -662,9 +662,6 @@ def install_dependencies():
             logger.info("2. 更新软件源列表: sudo apt update")
             
         logger.info("脚本将继续执行，但可能会在编译过程中遇到问题")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"依赖安装失败: {e}")
-        raise
 
 # 下载ModSecurity库
 def download_modsecurity(force_update=False):
@@ -1000,7 +997,7 @@ def install_modsecurity_nginx(force_update=False):
         print(f"+++ 执行: {compile_cmd} +++")
         try:
             # 捕获并保存所有输出，便于调试
-            process = subprocess.Popen(compile_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            process = subprocess.Popen(compile_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
             stdout, stderr = process.communicate()
             
             # 显示所有输出
@@ -1029,7 +1026,7 @@ def install_modsecurity_nginx(force_update=False):
         
             print("+++ 执行: make modules +++")
             # 同样捕获make命令的输出
-            process = subprocess.Popen("make modules", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            process = subprocess.Popen("make modules", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
             stdout, stderr = process.communicate()
             
             if stdout:
