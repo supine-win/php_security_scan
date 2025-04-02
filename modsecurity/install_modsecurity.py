@@ -142,11 +142,29 @@ def install_dependencies():
         sys.exit(1)
     
     try:
-        subprocess.run(cmd, shell=True, check=True)
-        logger.info("依赖安装完成")
-    except subprocess.CalledProcessError:
-        logger.error("依赖安装失败")
-        sys.exit(1)
+        # 捕获过程的输出以进行详细错误分析
+        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout, stderr = process.communicate()
+        
+        if process.returncode != 0:
+            logger.error("依赖安装失败")
+            logger.debug(f"stdout: {stdout}")
+            logger.debug(f"stderr: {stderr}")
+            
+            # 分析错误并提供更有用的提示
+            if "Could not resolve host" in stderr:
+                logger.error("检测到DNS解析问题，无法连接到软件仓库")
+                logger.error("请检查系统的网络连接或使用 --skip-deps 参数跳过依赖安装")
+            elif "No package" in stderr:
+                logger.error("某些软件包在当前系统的软件仓库中不可用")
+                logger.error("请考虑添加额外的软件仓库或手动安装依赖")
+            
+            raise subprocess.CalledProcessError(process.returncode, cmd, output=stdout, stderr=stderr)
+        else:
+            logger.info("依赖安装完成")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"依赖安装失败: {e}")
+        raise
 
 # 下载ModSecurity库
 def download_modsecurity(force_update=False):
@@ -901,11 +919,12 @@ Include "{crs_path}/rules/*.conf"
         sys.exit(1)
 
 # 主函数
-def main(force_update=False):
+def main(force_update=False, skip_deps=False):
     """主函数
     
     Args:
         force_update (bool, optional): 强制更新ModSecurity模块，即使已存在也会重新编译。默认为False。
+        skip_deps (bool, optional): 是否跳过依赖安装。当系统无法连接到网络时可以使用此选项。默认为False。
     """
     try:
         # 检查是否为root用户
@@ -916,8 +935,19 @@ def main(force_update=False):
         # 创建构建目录
         os.makedirs(BUILD_DIR, exist_ok=True)
         
-        # 安装依赖
-        install_dependencies()
+        # 安装依赖（除非被要求跳过）
+        if skip_deps:
+            logger.warning("根据用户请求跳过依赖安装，请确保系统已安装了所有必要的开发包")
+        else:
+            try:
+                install_dependencies()
+            except Exception as e:
+                logger.error(f"依赖安装遇到问题: {e}")
+                if "Could not resolve host" in str(e) or "Failed to connect" in str(e) or "Unable to establish connection" in str(e):
+                    logger.error("检测到网络连接问题，可能是DNS解析失败或网络不可用")
+                    logger.error("如果你确定系统已经安装了所有必要的依赖，可以使用 --skip-deps 参数重新运行脚本")
+                    sys.exit(1)
+                logger.warning("提示: 依赖安装失败，将尝试继续安装流程，但可能会在后续步骤中失败")
         
         # 下载和编译ModSecurity
         download_modsecurity(force_update)
@@ -948,6 +978,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='ModSecurity安装脚本')
     parser.add_argument('-f', '--force', action='store_true', help='强制重新编译ModSecurity模块，即使已存在也会更新')
     parser.add_argument('-v', '--verbose', action='store_true', help='显示详细的安装过程信息')
+    parser.add_argument('-s', '--skip-deps', action='store_true', help='跳过依赖安装，适用于无法连接到网络的环境')
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -956,4 +987,4 @@ if __name__ == "__main__":
     if args.verbose:
         logger.setLevel(logging.DEBUG)
         
-    main(force_update=args.force)
+    main(force_update=args.force, skip_deps=args.skip_deps)
