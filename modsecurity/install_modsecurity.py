@@ -154,14 +154,20 @@ def download_modsecurity():
         
         # 初始化子模块
         logger.info("初始化子模块...")
+        print("+++ 执行: git submodule init +++")
         subprocess.run("git submodule init", shell=True, check=True)
+        print("+++ 执行: git submodule update +++")
         subprocess.run("git submodule update", shell=True, check=True)
         
         # 构建和编译
         logger.info("开始编译ModSecurity...")
+        print("+++ 执行: ./build.sh +++")
         subprocess.run("./build.sh", shell=True, check=True)
+        print("+++ 执行: ./configure +++")
         subprocess.run("./configure", shell=True, check=True)
+        print("+++ 执行: make +++")
         subprocess.run("make", shell=True, check=True)
+        print("+++ 执行: make install +++")
         subprocess.run("make install", shell=True, check=True)
         
         logger.info("ModSecurity编译安装完成")
@@ -252,7 +258,9 @@ def install_modsecurity_nginx():
         
         # 构建编译命令
         compile_cmd = f"./configure {configure_args} --add-dynamic-module={modsec_nginx_path}"
+        print(f"+++ 执行: {compile_cmd} +++")
         subprocess.run(compile_cmd, shell=True, check=True)
+        print("+++ 执行: make modules +++")
         subprocess.run("make modules", shell=True, check=True)
         logger.info("编译Nginx ModSecurity模块成功")
         
