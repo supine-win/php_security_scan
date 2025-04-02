@@ -46,21 +46,32 @@ def install_dependencies():
     
     distro_family = get_distro_family()
     
+    # 检测是否为宝塔环境
+    is_bt_env = os.path.exists('/www/server/panel') or os.path.exists('/www/server/nginx')
+    if is_bt_env:
+        logger.info("检测到宝塔面板环境，跳过Nginx安装")
+    
     if distro_family == 'rhel':
         # CentOS/RHEL系统
         dependencies = [
             "git", "gcc", "gcc-c++", "make", "automake", "autoconf", "libtool", 
             "pcre-devel", "libxml2-devel", "curl-devel", "openssl-devel", 
-            "yajl-devel", "libmaxminddb-devel", "lua-devel", "nginx"
+            "yajl-devel", "libmaxminddb-devel", "lua-devel"
         ]
+        # 如果不是宝塔环境，添加nginx依赖
+        if not is_bt_env:
+            dependencies.append("nginx")
         cmd = f"yum install -y {' '.join(dependencies)}"
     elif distro_family == 'debian':
         # Debian/Ubuntu系统
         dependencies = [
             "git", "build-essential", "automake", "autoconf", "libtool", 
             "libpcre3-dev", "libxml2-dev", "libcurl4-openssl-dev", "libssl-dev", 
-            "libyajl-dev", "libmaxminddb-dev", "liblua5.3-dev", "nginx"
+            "libyajl-dev", "libmaxminddb-dev", "liblua5.3-dev"
         ]
+        # 如果不是宝塔环境，添加nginx依赖
+        if not is_bt_env:
+            dependencies.append("nginx")
         cmd = f"apt update && apt install -y {' '.join(dependencies)}"
     else:
         logger.error("不支持的系统类型")
