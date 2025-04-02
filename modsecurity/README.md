@@ -60,8 +60,13 @@ python3 install_modsecurity.py -v
 # 或者
 python3 install_modsecurity.py --verbose
 
+# 跳过依赖安装，适用于系统无法连接到网络的情况
+python3 install_modsecurity.py -s
+# 或者
+python3 install_modsecurity.py --skip-deps
+
 # 可以组合使用多个参数
-python3 install_modsecurity.py -f -v
+python3 install_modsecurity.py -f -v -s
 ```
 
 如果使用一键安装脚本，您可以如下传递参数：
@@ -73,8 +78,14 @@ curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity/in
 # 详细模式
 curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity/install_modsecurity.sh | bash -s -- -v
 
+# 跳过依赖安装，适用于无法连接到网络或DNS解析失败的服务器
+curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity/install_modsecurity.sh | bash -s -- -s
+
 # 同时启用强制更新和详细模式
 curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity/install_modsecurity.sh | bash -s -- -f -v
+
+# 组合所有选项
+curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity/install_modsecurity.sh | bash -s -- -f -v -s
 ```
 
 ## 安装后验证
