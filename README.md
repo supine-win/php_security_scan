@@ -263,12 +263,7 @@ CSV文件包含完整的详细结果，包括：
 
 2. **使用镜像源**：脚本已经集成了多个备用下载源，会自动尝试备用镜像
 
-3. **手动下载**：如果所有自动方式均失败，您可以：
-
-   ```bash
-   # 从 GitHub 手动下载
-   git clone https://github.com/supine-win/php_security_scan.git
-   ```
+3. **手动下载**：如果所有自动方式均失败，请参考本文档末尾的"其他下载选项"部分。
 
 ## ModSecurity安装脚本
 
@@ -325,14 +320,9 @@ CSV文件包含完整的详细结果，包括：
 
 # 如果返回403状态码，表示ModSecurity成功拦截攻击
 ```
-   cd php_security_scan
-   python main.py /path/to/php/directory
-   
-   # 或者从 Gitee 手动下载(国内推荐)
-   git clone https://gitee.com/supine-win/php_security_scan.git
-   cd php_security_scan
-   python main.py /path/to/php/directory
-   ```
+
+
+## 其他下载选项
 
 3. **设置代理**：如果您在网络受限的环境中，可以设置代理：
 
@@ -346,3 +336,17 @@ CSV文件包含完整的详细结果，包括：
    ```
 
 4. **直接使用Gitee**: 我们已在Gitee上提供了完整的项目镜像，国内用户可直接访问 [https://gitee.com/supine-win/php_security_scan](https://gitee.com/supine-win/php_security_scan)
+
+5. **手动下载的完整步骤**：
+
+   ```bash
+   # 从 GitHub 手动下载
+   git clone https://github.com/supine-win/php_security_scan.git
+   cd php_security_scan
+   python main.py /path/to/php/directory
+
+   # 或者从 Gitee 手动下载(国内推荐)
+   git clone https://gitee.com/supine-win/php_security_scan.git
+   cd php_security_scan
+   python main.py /path/to/php/directory
+   ```
