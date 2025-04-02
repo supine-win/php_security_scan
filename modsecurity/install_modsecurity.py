@@ -674,6 +674,34 @@ def configure_modsecurity():
     
     with open(modsec_conf_dst, 'w') as file:
         file.write(conf_content)
+        
+    # 在宝塔环境下，同步标准路径的ModSecurity配置
+    if IS_BT_ENV:
+        # 确保标准路径的目录存在
+        std_modsec_dir = "/etc/nginx/modsecurity"
+        std_conf_d_dir = "/etc/nginx/conf.d"
+        std_modules_dir = "/etc/nginx/modules-enabled"
+        
+        os.makedirs(std_modsec_dir, exist_ok=True)
+        os.makedirs(std_conf_d_dir, exist_ok=True)
+        os.makedirs(std_modules_dir, exist_ok=True)
+        
+        # 同步unicode.mapping文件
+        std_unicode_mapping = os.path.join(std_modsec_dir, "unicode.mapping")
+        if os.path.exists(unicode_mapping_dst):
+            logger.info(f"同步unicode.mapping文件到标准路径: {std_unicode_mapping}")
+            shutil.copy(unicode_mapping_dst, std_unicode_mapping)
+        
+        # 同步modsecurity.conf文件
+        std_modsec_conf = os.path.join(std_modsec_dir, "modsecurity.conf")
+        logger.info(f"同步ModSecurity配置到标准路径: {std_modsec_conf}")
+        
+        # 修改标准路径的配置文件，确保使用正确的unicode.mapping路径
+        with open(modsec_conf_dst, 'r') as file:
+            std_conf_content = file.read()
+        
+        with open(std_modsec_conf, 'w') as file:
+            file.write(std_conf_content)
     
     # 创建include.conf配置
     include_conf = os.path.join(modsec_dir, "include.conf")
@@ -712,8 +740,10 @@ load_module {module_file};
     # 2. 创建实际启用ModSecurity的配置文件（在http块内包含）
     if IS_BT_ENV:
         modsec_nginx_conf = "/www/server/nginx/conf.d/modsecurity.conf"
+        std_modsec_nginx_conf = "/etc/nginx/conf.d/modsecurity.conf"
     else:
         modsec_nginx_conf = "/etc/nginx/conf.d/modsecurity.conf"
+        std_modsec_nginx_conf = modsec_nginx_conf
         
     logger.info(f"使用Nginx配置文件: {modsec_nginx_conf}")
     os.makedirs(os.path.dirname(modsec_nginx_conf), exist_ok=True)
@@ -722,6 +752,28 @@ load_module {module_file};
         file.write(f"""# 在server块内启用ModSecurity
 modsecurity on;
 modsecurity_rules_file {modsec_dir}/include.conf;
+""")
+        
+    # 在宝塔环境下，同步标准路径的Nginx配置文件
+    if IS_BT_ENV:
+        os.makedirs(os.path.dirname(std_modsec_nginx_conf), exist_ok=True)
+        logger.info(f"同步Nginx配置到标准路径: {std_modsec_nginx_conf}")
+        
+        with open(std_modsec_nginx_conf, 'w') as file:
+            file.write(f"""# 在server块内启用ModSecurity
+modsecurity on;
+modsecurity_rules_file {std_modsec_dir}/include.conf;
+""")
+            
+        # 创建标准路径的include.conf文件
+        std_include_conf = os.path.join(std_modsec_dir, "include.conf")
+        std_crs_path = "/etc/nginx/modsecurity-crs"
+        
+        with open(std_include_conf, 'w') as file:
+            file.write(f"""# ModSecurity配置
+Include "{std_modsec_dir}/modsecurity.conf"
+Include "{crs_path}/crs-setup.conf"
+Include "{crs_path}/rules/*.conf"
 """)
     
     logger.info("ModSecurity配置完成，请将以下内容添加到您的Nginx主配置文件的顶层:")
