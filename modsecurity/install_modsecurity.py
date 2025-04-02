@@ -190,6 +190,15 @@ def download_modsecurity():
 def install_modsecurity_nginx():
     """下载和安装ModSecurity-nginx连接器"""
     logger.info("下载ModSecurity-nginx连接器...")
+    
+    # 检查模块文件是否已存在
+    modules_dir = os.path.join(NGINX_PATH, "modules")
+    module_file = os.path.join(modules_dir, "ngx_http_modsecurity_module.so")
+    if os.path.exists(module_file):
+        logger.info(f"检测到ModSecurity模块已存在: {module_file}")
+        logger.info("跳过ModSecurity-nginx模块编译和安装")
+        return
+        
     os.chdir(BUILD_DIR)
 
     # 优先尝试从supine-win的Gitee镜像下载源码
