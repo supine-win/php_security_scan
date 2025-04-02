@@ -70,7 +70,10 @@ def install_dependencies():
         dependencies = [
             "git", "gcc", "gcc-c++", "make", "automake", "autoconf", "libtool", 
             "pcre-devel", "libxml2-devel", "curl-devel", "openssl-devel", 
-            "yajl-devel", "libmaxminddb-devel", "lua-devel"
+            "yajl-devel", "libmaxminddb-devel", "lua-devel",
+            # 添加更多必要的开发包
+            "zlib-devel", "gd-devel", "perl-devel", "perl-ExtUtils-Embed", "geoip-devel",
+            "kernel-devel", "cmake"
         ]
         # 如果未安装nginx且不是宝塔环境，添加nginx依赖
         if not nginx_installed and not is_bt_env:
@@ -84,7 +87,9 @@ def install_dependencies():
         dependencies = [
             "git", "build-essential", "automake", "autoconf", "libtool", 
             "libpcre3-dev", "libxml2-dev", "libcurl4-openssl-dev", "libssl-dev", 
-            "libyajl-dev", "libmaxminddb-dev", "liblua5.3-dev"
+            "libyajl-dev", "libmaxminddb-dev", "liblua5.3-dev",
+            # 添加更多必要的开发包，特别是Ubuntu系统需要的
+            "zlib1g-dev", "gcc", "g++", "make", "cmake", "pkg-config"
         ]
         # 如果未安装nginx且不是宝塔环境，添加nginx依赖
         if not nginx_installed and not is_bt_env:
@@ -259,10 +264,55 @@ def install_modsecurity_nginx():
         # 构建编译命令
         compile_cmd = f"./configure {configure_args} --add-dynamic-module={modsec_nginx_path}"
         print(f"+++ 执行: {compile_cmd} +++")
-        subprocess.run(compile_cmd, shell=True, check=True)
-        print("+++ 执行: make modules +++")
-        subprocess.run("make modules", shell=True, check=True)
-        logger.info("编译Nginx ModSecurity模块成功")
+        try:
+            # 捕获并保存所有输出，便于调试
+            process = subprocess.Popen(compile_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            stdout, stderr = process.communicate()
+            
+            # 显示所有输出
+            if stdout:
+                print("Configure 标准输出:")
+                print(stdout)
+                
+            # 如果返回非零状态，显示错误并退出
+            if process.returncode != 0:
+                print("\n\nConfigure 错误输出:")
+                print(stderr)
+                # 检查常见的错误原因
+                missing_deps = []
+                if "not found" in stderr:
+                    missing_deps.append("缺少依赖库")
+                if "error: C" in stderr:
+                    missing_deps.append("编译器错误")
+                    
+                error_msg = "编译配置失败"
+                if missing_deps:
+                    error_msg += ": " + ", ".join(missing_deps)
+                
+                logger.error(f"{error_msg}\n请检查编译环境并确保所有依赖项已安装")
+                logger.error("请尝试手动安装以下开发包: build-essential libpcre3-dev libxml2-dev libcurl4-openssl-dev")
+                sys.exit(1)
+        
+            print("+++ 执行: make modules +++")
+            # 同样捕获make命令的输出
+            process = subprocess.Popen("make modules", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            stdout, stderr = process.communicate()
+            
+            if stdout:
+                print("Make 标准输出:")
+                print(stdout)
+                
+            if process.returncode != 0:
+                print("\n\nMake 错误输出:")
+                print(stderr)
+                logger.error("模块编译失败\n请检查上述错误信息")
+                sys.exit(1)
+                
+            logger.info("编译Nginx ModSecurity模块成功")
+        except Exception as e:
+            logger.error(f"编译过程出现异常: {str(e)}")
+            logger.error("请确保安装了所有必要的开发包：build-essential libpcre3-dev libxml2-dev libcurl4-openssl-dev")
+            sys.exit(1)
         
         # 创建模块目录并复制模块
         modules_dir = os.path.join(NGINX_PATH, "modules")
