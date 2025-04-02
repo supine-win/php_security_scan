@@ -841,8 +841,8 @@ Include "{crs_path}/rules/*.conf"
             except subprocess.CalledProcessError:
                 logger.warning("宝塔Nginx reload命令失败，尝试启动Nginx...")
                 try:
-                    # 如果Nginx未运行，尝试启动
-                    bt_nginx_start_cmd = f"{NGINX_BIN}"
+                    # 如果Nginx未运行，尝试启动，必须指定配置文件路径
+                    bt_nginx_start_cmd = f"{NGINX_BIN} -c {NGINX_CONF}"
                     logger.info(f"尝试启动Nginx: {bt_nginx_start_cmd}")
                     subprocess.run(bt_nginx_start_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     restart_success = True
@@ -850,18 +850,26 @@ Include "{crs_path}/rules/*.conf"
                 except subprocess.CalledProcessError:
                     logger.warning("宝塔Nginx启动命令失败")
                     
-                    # 尝试宝塔面板提供的服务管理命令
-                    panel_nginx_cmd = "/www/server/panel/plugin/nginx/index.py restart"
-                    if os.path.exists("/www/server/panel/plugin/nginx/index.py"):
-                        try:
-                            logger.info(f"尝试使用宝塔面板插件命令: {panel_nginx_cmd}")
-                            subprocess.run(panel_nginx_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            restart_success = True
-                            logger.info("使用宝塔面板插件重启Nginx成功")
-                        except subprocess.CalledProcessError:
-                            logger.warning("宝塔面板插件命令失败，所有重启方法均失败")
-                    else:
-                        logger.warning("未找到宝塔Nginx插件，所有重启方法均失败")
+                    # 尝试最后的备选方案，使用Nginx信号控制
+                    try:
+                        # 尝试发送USR2信号，这对宝塔Nginx也可能能工作
+                        nginx_pid_file = "/www/server/nginx/logs/nginx.pid"
+                        if os.path.exists(nginx_pid_file):
+                            with open(nginx_pid_file, 'r') as f:
+                                try:
+                                    pid = int(f.read().strip())
+                                    logger.info(f"尝试发送重载信号给Nginx进程(PID: {pid})")
+                                    os.kill(pid, signal.SIGUSR2)
+                                    restart_success = True
+                                    logger.info("发送重载信号成功")
+                                except (ValueError, ProcessLookupError) as e:
+                                    logger.warning(f"无法发送信号到Nginx进程: {e}")
+                        else:
+                            logger.warning(f"Nginx PID文件不存在: {nginx_pid_file}")
+                    except Exception as e:
+                        logger.warning(f"尝试发送信号失败: {e}")
+                    
+                    logger.warning("所有重启Nginx的方法均失败，请手动重启Nginx")
             except subprocess.CalledProcessError:
                 logger.warning("宝塔特定重启方式失败")
                 
