@@ -120,6 +120,96 @@ def get_nginx_info(bt_env=False):
 DISTRO_FAMILY = get_distro_family()
 logger.info(f"检测到系统类型: {DISTRO_FAMILY}")
 
+def install_epel_repo():
+    """安装EPEL仓库以提供额外的依赖包
+    
+    Returns:
+        bool: 是否成功安装EPEL仓库
+    """
+    if DISTRO_FAMILY != 'rhel':
+        logger.info("非CentOS/RHEL系统，跳过EPEL仓库安装")
+        return True
+    
+    logger.info("尝试安装EPEL仓库以提供额外的依赖包...")
+    
+    # 检查是否已安装EPEL
+    epel_installed = False
+    try:
+        subprocess.run("yum repolist | grep -i epel", shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        epel_installed = True
+        logger.info("EPEL仓库已安装")
+        return True
+    except subprocess.CalledProcessError:
+        logger.info("EPEL仓库未安装，将安装")
+    
+    # 获取CentOS版本信息
+    centos_version = ""
+    try:
+        with open('/etc/centos-release', 'r') as f:
+            centos_release = f.read().strip()
+            version_match = re.search(r'release (\d+)\.', centos_release)
+            if version_match:
+                centos_version = version_match.group(1)
+    except FileNotFoundError:
+        logger.warning("无法读取CentOS版本信息，将尝试自动检测")
+    
+    # 针对不同版本安装合适的EPEL
+    if centos_version == "7":
+        # CentOS 7使用阿里云镜像安装EPEL
+        try:
+            logger.info("尝试从阿里云镜像安装CentOS 7的EPEL...")
+            subprocess.run("yum install -y https://mirrors.aliyun.com/epel/epel-release-latest-7.noarch.rpm", 
+                         shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # 替换为国内镜像源
+            subprocess.run("sed -i 's|^#baseurl=http://download.fedoraproject.org/pub/epel|baseurl=https://mirrors.aliyun.com/epel|g' /etc/yum.repos.d/epel*.repo", 
+                         shell=True, check=True)
+            subprocess.run("sed -i 's|^metalink|#metalink|g' /etc/yum.repos.d/epel*.repo", 
+                         shell=True, check=True)
+            logger.info("CentOS 7 EPEL仓库安装成功(阿里云镜像)")
+            return True
+        except subprocess.CalledProcessError:
+            try:
+                logger.warning("从阿里云安装失败，尝试官方源...")
+                subprocess.run("yum install -y epel-release", shell=True, check=True)
+                logger.info("CentOS 7 EPEL仓库安装成功(官方源)")
+                return True
+            except subprocess.CalledProcessError as e:
+                logger.error(f"CentOS 7 EPEL仓库安装失败: {e}")
+                return False
+    elif centos_version == "8":
+        # CentOS 8使用阿里云镜像安装EPEL
+        try:
+            logger.info("尝试从阿里云镜像安装CentOS 8的EPEL...")
+            subprocess.run("yum install -y https://mirrors.aliyun.com/epel/epel-release-latest-8.noarch.rpm", 
+                         shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # 替换为国内镜像源
+            subprocess.run("sed -i 's|^#baseurl=http://download.fedoraproject.org/pub/epel|baseurl=https://mirrors.aliyun.com/epel|g' /etc/yum.repos.d/epel*.repo", 
+                         shell=True, check=True)
+            subprocess.run("sed -i 's|^metalink|#metalink|g' /etc/yum.repos.d/epel*.repo", 
+                         shell=True, check=True)
+            logger.info("CentOS 8 EPEL仓库安装成功(阿里云镜像)")
+            return True
+        except subprocess.CalledProcessError:
+            try:
+                logger.warning("从阿里云安装失败，尝试官方源...")
+                subprocess.run("yum install -y epel-release", shell=True, check=True)
+                logger.info("CentOS 8 EPEL仓库安装成功(官方源)")
+                return True
+            except subprocess.CalledProcessError as e:
+                logger.error(f"CentOS 8 EPEL仓库安装失败: {e}")
+                return False
+    else:
+        # 未知版本，尝试通用安装
+        try:
+            logger.info("未检测到版本信息，尝试安装EPEL...")
+            subprocess.run("yum install -y epel-release", shell=True, check=True)
+            logger.info("EPEL仓库安装成功")
+            return True
+        except subprocess.CalledProcessError as e:
+            logger.error(f"EPEL仓库安装失败: {e}")
+            return False
+
+
 def fix_centos_yum_mirrors():
     """修复CentOS的YUM镜像源问题
     
@@ -490,13 +580,26 @@ def install_dependencies():
         logger.error("不支持的系统类型")
         sys.exit(1)
     
+    # 使用分段安装策略和更好的错误处理
+    if distro_family == 'rhel':
+        # 首先尝试安装EPEL仓库来提供更多依赖包
+        epel_installed = install_epel_repo()
+        if epel_installed:
+            logger.info("成功添加EPEL仓库，这将提供更多依赖包")
+            subprocess.run("yum clean all && yum makecache", shell=True, check=False)
+        else:
+            logger.warning("无法安装EPEL仓库，某些依赖包可能不可用")
+    
+    # 分批安装依赖，以防单个包失败影响全局
+    missing_packages = []
+    
     try:
         # 捕获过程的输出以进行详细错误分析
         process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
         
         if process.returncode != 0:
-            logger.error("依赖安装失败")
+            logger.warning("部分依赖安装可能失败")
             logger.debug(f"stdout: {stdout}")
             logger.debug(f"stderr: {stderr}")
             
@@ -504,13 +607,61 @@ def install_dependencies():
             if "Could not resolve host" in stderr:
                 logger.error("检测到DNS解析问题，无法连接到软件仓库")
                 logger.error("请检查系统的网络连接或使用 --skip-deps 参数跳过依赖安装")
-            elif "No package" in stderr:
-                logger.error("某些软件包在当前系统的软件仓库中不可用")
-                logger.error("请考虑添加额外的软件仓库或手动安装依赖")
+                raise subprocess.CalledProcessError(process.returncode, cmd, output=stdout, stderr=stderr)
             
-            raise subprocess.CalledProcessError(process.returncode, cmd, output=stdout, stderr=stderr)
+            # 检测是否有缺失的包
+            if "No package" in stderr or "nothing provides" in stderr.lower():
+                # 提取缺失的包名称
+                missing_package_matches = re.findall(r'No package ([\w-]+) available', stderr)
+                missing_package_matches.extend(re.findall(r'nothing provides ([\w-]+) needed', stderr.lower()))
+                
+                for pkg in missing_package_matches:
+                    missing_packages.append(pkg)
+                    logger.warning(f"软件包 {pkg} 在当前系统的仓库中不可用")
+                
+                # 尝试一个一个安装其余的依赖包
+                logger.info("将尝试单独安装每个依赖包，已跳过不可用的包")
+                for dep in dependencies:
+                    if dep not in missing_packages:
+                        try:
+                            if distro_family == 'rhel':
+                                install_cmd = f"yum install -y {dep}"
+                            else:  # debian
+                                install_cmd = f"apt install -y {dep}"
+                            
+                            subprocess.run(install_cmd, shell=True, check=True, 
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            logger.info(f"成功安装依赖: {dep}")
+                        except subprocess.CalledProcessError:
+                            missing_packages.append(dep)
+                            logger.warning(f"无法安装依赖: {dep}")
         else:
             logger.info("依赖安装完成")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"依赖安装过程出错: {e}")
+        # 在DNS错误等严重问题下才会执行到这里
+        raise
+    
+    # 如果有缺失的包，给出具体的解决方案
+    if missing_packages:
+        logger.warning(f"共有 {len(missing_packages)} 个依赖包无法安装: {', '.join(missing_packages)}")
+        
+        # RHEL系统特定的建议
+        if distro_family == 'rhel':
+            logger.info("对于CentOS/RHEL系统，可尝试以下方法来安装缺失的依赖:")
+            logger.info("1. 激活 PowerTools 或 CRB 仓库(如适用):")
+            logger.info("   sudo yum config-manager --set-enabled powertools")
+            logger.info("   或者: sudo yum config-manager --set-enabled crb")
+            logger.info("2. 尝试其他软件源，如 Remi's RPM 仓库或者 IUS:")
+            logger.info("   https://rpms.remirepo.net/ 或 https://ius.io/")
+            logger.info("3. 如果可能，升级系统至更新版本")
+        # Debian系统特定的建议
+        else:  
+            logger.info("对于Debian/Ubuntu系统，可尝试以下方法来安装缺失的依赖:")
+            logger.info("1. 激活额外的软件源: sudo apt-add-repository universe")
+            logger.info("2. 更新软件源列表: sudo apt update")
+            
+        logger.info("脚本将继续执行，但可能会在编译过程中遇到问题")
     except subprocess.CalledProcessError as e:
         logger.error(f"依赖安装失败: {e}")
         raise
