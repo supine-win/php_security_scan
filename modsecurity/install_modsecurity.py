@@ -507,18 +507,27 @@ Include "/etc/nginx/modsecurity-crs/crs-setup.conf"
 Include "/etc/nginx/modsecurity-crs/rules/*.conf"
 """)
     
-    # 创建Nginx ModSecurity配置
+    # 创建Nginx ModSecurity配置 - 拆分为两个文件
+    
+    # 1. 创建加载模块的配置文件（必须在主配置文件的最顶层）
+    modsec_module_conf = "/etc/nginx/modules-enabled/50-mod-http-modsecurity.conf"
+    os.makedirs(os.path.dirname(modsec_module_conf), exist_ok=True)
+    with open(modsec_module_conf, 'w') as file:
+        file.write("""# 加载ModSecurity模块 - 这必须放在主配置文件的顶层
+load_module modules/ngx_http_modsecurity_module.so;
+""")
+    
+    # 2. 创建实际启用ModSecurity的配置文件（在http块内包含）
     modsec_nginx_conf = "/etc/nginx/conf.d/modsecurity.conf"
     with open(modsec_nginx_conf, 'w') as file:
-        file.write("""# 在http块内加载ModSecurity模块
-load_module modules/ngx_http_modsecurity_module.so;
-
-# 在server块内启用ModSecurity
+        file.write("""# 在server块内启用ModSecurity
 modsecurity on;
 modsecurity_rules_file /etc/nginx/modsecurity/include.conf;
 """)
     
-    logger.info("ModSecurity配置完成，请将以下内容添加到您的Nginx配置中的http块:")
+    logger.info("ModSecurity配置完成，请将以下内容添加到您的Nginx主配置文件的顶层:")
+    logger.info("include /etc/nginx/modules-enabled/50-mod-http-modsecurity.conf;")
+    logger.info("并将以下内容添加到http块:")
     logger.info("include /etc/nginx/conf.d/modsecurity.conf;")
     
     # 重启Nginx
