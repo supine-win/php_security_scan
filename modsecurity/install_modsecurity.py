@@ -51,6 +51,20 @@ def install_dependencies():
     if is_bt_env:
         logger.info("检测到宝塔面板环境，跳过Nginx安装")
     
+    # 检测是否已安装Nginx
+    nginx_installed = False
+    try:
+        # 尝试执行 nginx -v 命令检测是否已安装
+        subprocess.run("nginx -v", shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        nginx_installed = True
+        nginx_version_output = subprocess.check_output("nginx -v", shell=True, stderr=subprocess.STDOUT).decode()
+        import re
+        nginx_version = re.search(r'nginx/(\d+\.\d+\.\d+)', nginx_version_output).group(1)
+        logger.info(f"检测到系统中已安装Nginx v{nginx_version}，跳过Nginx安装")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        logger.info("未检测到Nginx，将进行安装")
+        nginx_installed = False
+    
     if distro_family == 'rhel':
         # CentOS/RHEL系统
         dependencies = [
@@ -58,9 +72,12 @@ def install_dependencies():
             "pcre-devel", "libxml2-devel", "curl-devel", "openssl-devel", 
             "yajl-devel", "libmaxminddb-devel", "lua-devel"
         ]
-        # 如果不是宝塔环境，添加nginx依赖
-        if not is_bt_env:
+        # 如果未安装nginx且不是宝塔环境，添加nginx依赖
+        if not nginx_installed and not is_bt_env:
             dependencies.append("nginx")
+            logger.info("将安装Nginx服务器")
+        else:
+            logger.info("跳过Nginx安装，使用现有Nginx")
         cmd = f"yum install -y {' '.join(dependencies)}"
     elif distro_family == 'debian':
         # Debian/Ubuntu系统
@@ -69,9 +86,12 @@ def install_dependencies():
             "libpcre3-dev", "libxml2-dev", "libcurl4-openssl-dev", "libssl-dev", 
             "libyajl-dev", "libmaxminddb-dev", "liblua5.3-dev"
         ]
-        # 如果不是宝塔环境，添加nginx依赖
-        if not is_bt_env:
+        # 如果未安装nginx且不是宝塔环境，添加nginx依赖
+        if not nginx_installed and not is_bt_env:
             dependencies.append("nginx")
+            logger.info("将安装Nginx服务器")
+        else:
+            logger.info("跳过Nginx安装，使用现有Nginx")
         cmd = f"apt update && apt install -y {' '.join(dependencies)}"
     else:
         logger.error("不支持的系统类型")
