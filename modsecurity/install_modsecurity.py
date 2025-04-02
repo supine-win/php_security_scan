@@ -9,6 +9,7 @@ import platform
 import logging
 from pathlib import Path
 import tempfile
+import argparse
 
 # 配置日志
 logging.basicConfig(
@@ -114,8 +115,12 @@ def install_dependencies():
         sys.exit(1)
 
 # 下载ModSecurity库
-def download_modsecurity():
-    """下载ModSecurity核心库"""
+def download_modsecurity(force_update=False):
+    """下载ModSecurity核心库
+    
+    Args:
+        force_update (bool, optional): 强制重新编译ModSecurity模块，即使已存在也会更新。默认为False。
+    """
     logger.info("下载ModSecurity...")
     os.chdir(BUILD_DIR)
     
@@ -173,11 +178,15 @@ def download_modsecurity():
         print("+++ 执行: git submodule update +++")
         subprocess.run("git submodule update", shell=True, check=True)
         
-        # 如果模块已存在，跳过编译步骤
-        if module_exists:
+        # 如果模块已存在且不是强制更新，跳过编译步骤
+        if module_exists and not force_update:
             logger.info(f"检测到ModSecurity模块已存在: {module_file}")
             logger.info("跳过ModSecurity的编译和安装步骤")
             return
+        
+        # 如果强制更新模式且模块存在
+        if module_exists and force_update:
+            logger.info(f"强制更新模式: 将重新编译ModSecurity模块")
             
         # 构建和编译
         logger.info("开始编译ModSecurity...")
@@ -198,17 +207,31 @@ def download_modsecurity():
 
 
 # 下载和安装ModSecurity-nginx连接器
-def install_modsecurity_nginx():
-    """下载和安装ModSecurity-nginx连接器"""
+def install_modsecurity_nginx(force_update=False):
+    """下载和安装ModSecurity-nginx连接器
+    
+    Args:
+        force_update (bool, optional): 强制重新编译ModSecurity模块，即使已存在也会更新。默认为False。
+    """
     logger.info("下载ModSecurity-nginx连接器...")
     
     # 检查模块文件是否已存在
     modules_dir = os.path.join(NGINX_PATH, "modules")
     module_file = os.path.join(modules_dir, "ngx_http_modsecurity_module.so")
-    if os.path.exists(module_file):
+    if os.path.exists(module_file) and not force_update:
         logger.info(f"检测到ModSecurity模块已存在: {module_file}")
         logger.info("跳过ModSecurity-nginx模块编译和安装")
         return
+        
+    # 如果强制更新模式且模块存在
+    if os.path.exists(module_file) and force_update:
+        logger.info(f"强制更新模式: 将重新编译ModSecurity-nginx模块")
+        # 移除现有模块文件以确保更新
+        try:
+            os.remove(module_file)
+            logger.info(f"已移除现有模块文件: {module_file}")
+        except Exception as e:
+            logger.warning(f"无法移除现有模块文件: {e}")
         
     os.chdir(BUILD_DIR)
 
@@ -560,8 +583,12 @@ modsecurity_rules_file /etc/nginx/modsecurity/include.conf;
         sys.exit(1)
 
 # 主函数
-def main():
-    """主函数"""
+def main(force_update=False):
+    """主函数
+    
+    Args:
+        force_update (bool, optional): 强制更新ModSecurity模块，即使已存在也会重新编译。默认为False。
+    """
     try:
         # 检查是否为root用户
         if os.geteuid() != 0:
@@ -575,10 +602,10 @@ def main():
         install_dependencies()
         
         # 下载和编译ModSecurity
-        download_modsecurity()
+        download_modsecurity(force_update)
         
         # 安装ModSecurity-nginx
-        install_modsecurity_nginx()
+        install_modsecurity_nginx(force_update)
         
         # 下载CRS规则
         download_owasp_crs()
@@ -598,5 +625,17 @@ def main():
         if os.path.exists(BUILD_DIR):
             shutil.rmtree(BUILD_DIR)
 
+def parse_args():
+    """解析命令行参数"""
+    parser = argparse.ArgumentParser(description='ModSecurity安装脚本')
+    parser.add_argument('-f', '--force', action='store_true', help='强制重新编译ModSecurity模块，即使已存在也会更新')
+    parser.add_argument('-v', '--verbose', action='store_true', help='显示详细的安装过程信息')
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    # 如果指定了详细模式，设置日志级别为DEBUG
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+        
+    main(force_update=args.force)
