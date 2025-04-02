@@ -7,10 +7,12 @@ import subprocess
 import shutil
 import platform
 import logging
+import signal
 from pathlib import Path
 import tempfile
 import argparse
 import glob
+import re
 
 # 配置日志
 logging.basicConfig(
@@ -41,6 +43,19 @@ else:
     NGINX_PATH = "/etc/nginx"
     logger.info(f"标准环境，设置Nginx路径为: {NGINX_PATH}")
 
+# 信号处理函数，确保在脚本被中断时清理临时文件
+def cleanup_handler(signum, frame):
+    """在收到信号时清理临时文件"""
+    logger.info(f"接收到信号 {signum}，正在清理临时文件...")
+    if os.path.exists(BUILD_DIR):
+        shutil.rmtree(BUILD_DIR)
+    logger.info("清理完成，退出")
+    sys.exit(1)
+
+# 注册信号处理函数
+signal.signal(signal.SIGINT, cleanup_handler)  # Ctrl+C
+signal.signal(signal.SIGTERM, cleanup_handler) # 终止信号
+
 # 检测系统类型
 def get_distro_family():
     """检测当前系统类型"""
@@ -51,16 +66,19 @@ def get_distro_family():
     else:
         return 'unknown'
 
+# 检测系统类型并缓存
+DISTRO_FAMILY = get_distro_family()
+logger.info(f"检测到系统类型: {DISTRO_FAMILY}")
+
 # 安装系统依赖
 def install_dependencies():
     """安装ModSecurity所需的系统依赖"""
     logger.info("安装系统依赖...")
     
-    distro_family = get_distro_family()
+    distro_family = DISTRO_FAMILY  # 使用全局缓存的系统类型
     
     # 检测是否为宝塔环境
-    is_bt_env = os.path.exists('/www/server/panel') or os.path.exists('/www/server/nginx')
-    if is_bt_env:
+    if IS_BT_ENV:
         logger.info("检测到宝塔面板环境，跳过Nginx安装")
     
     # 检测是否已安装Nginx
@@ -70,7 +88,6 @@ def install_dependencies():
         subprocess.run("nginx -v", shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         nginx_installed = True
         nginx_version_output = subprocess.check_output("nginx -v", shell=True, stderr=subprocess.STDOUT).decode()
-        import re
         nginx_version = re.search(r'nginx/(\d+\.\d+\.\d+)', nginx_version_output).group(1)
         logger.info(f"检测到系统中已安装Nginx v{nginx_version}，跳过Nginx安装")
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -90,7 +107,7 @@ def install_dependencies():
             "GeoIP", "GeoIP-devel"
         ]
         # 如果未安装nginx且不是宝塔环境，添加nginx依赖
-        if not nginx_installed and not is_bt_env:
+        if not nginx_installed and not IS_BT_ENV:
             dependencies.append("nginx")
             logger.info("将安装Nginx服务器")
         else:
@@ -108,7 +125,7 @@ def install_dependencies():
             "libgeoip-dev", "libgeoip1"
         ]
         # 如果未安装nginx且不是宝塔环境，添加nginx依赖
-        if not nginx_installed and not is_bt_env:
+        if not nginx_installed and not IS_BT_ENV:
             dependencies.append("nginx")
             logger.info("将安装Nginx服务器")
         else:
@@ -284,7 +301,6 @@ def install_modsecurity_nginx(force_update=False):
     try:
         # 获取Nginx版本和源码
         nginx_version_output = subprocess.check_output("nginx -v", shell=True, stderr=subprocess.STDOUT).decode()
-        import re
         nginx_version = re.search(r'nginx/(\d+\.\d+\.\d+)', nginx_version_output).group(1)
         logger.info(f"检测到Nginx版本: {nginx_version}")
         
@@ -316,6 +332,9 @@ def install_modsecurity_nginx(force_update=False):
         configure_args = subprocess.check_output("nginx -V", shell=True, stderr=subprocess.STDOUT).decode()
         configure_args = re.search(r'configure arguments: (.*)', configure_args).group(1)
         
+        # 使用全局缓存的系统类型
+        distro_family = DISTRO_FAMILY
+        
         # 如果系统中没有libperl-dev包，移除perl模块选项减少编译问题
         if "--with-http_perl_module" in configure_args or "--with-http_perl_module=dynamic" in configure_args:
             # 尝试检查libperl-dev是否安装
@@ -342,9 +361,6 @@ def install_modsecurity_nginx(force_update=False):
         
         # 确保GeoIP库已安装，而不是移除GeoIP模块
         logger.info("确保安装GeoIP库以支持GeoIP模块...")
-        
-        # 先检测系统类型
-        distro_family = get_distro_family()
         
         # 确保安装GeoIP库
         try:
@@ -562,11 +578,18 @@ def configure_modsecurity():
         logger.warning("未找到unicode.mapping文件，尝试从其他目录查找")
         # 尝试从可能的位置查找
         possible_paths = [
-            os.path.join(BUILD_DIR, "modsecurity/unicode.mapping"),
+            # 已经在上面检查过的路径不需要再次添加: os.path.join(BUILD_DIR, "modsecurity/unicode.mapping")
             os.path.join(BUILD_DIR, "modsecurity-*/unicode.mapping"),
             "/usr/local/modsecurity/unicode.mapping",
-            "/usr/share/modsecurity/unicode.mapping"
+            "/usr/share/modsecurity/unicode.mapping",
+            "/usr/local/lib/modsecurity/unicode.mapping",
+            "/opt/modsecurity/unicode.mapping"
         ]
+        
+        # 根据环境添加宝塔特定路径
+        if IS_BT_ENV:
+            possible_paths.append("/www/server/nginx/conf/modsecurity/unicode.mapping")
+            possible_paths.append("/www/server/modsecurity/unicode.mapping")
         
         found = False
         for path_pattern in possible_paths:
@@ -622,9 +645,12 @@ Include "{crs_path}/rules/*.conf"
     
     logger.info(f"使用模块配置文件: {modsec_module_conf}")
     os.makedirs(os.path.dirname(modsec_module_conf), exist_ok=True)
+    # 获取模块的绝对路径
+    module_file = os.path.join(NGINX_PATH, "modules/ngx_http_modsecurity_module.so")
+    
     with open(modsec_module_conf, 'w') as file:
-        file.write("""# 加载ModSecurity模块 - 这必须放在主配置文件的顶层
-load_module modules/ngx_http_modsecurity_module.so;
+        file.write(f"""# 加载ModSecurity模块 - 这必须放在主配置文件的顶层
+load_module {module_file};
 """)
     
     # 2. 创建实际启用ModSecurity的配置文件（在http块内包含）
@@ -647,11 +673,67 @@ modsecurity_rules_file {modsec_dir}/include.conf;
     logger.info("并将以下内容添加到http块:")
     logger.info(f"include {modsec_nginx_conf};")
     
-    # 重启Nginx
+    # 重启Nginx - 兼容不同系统和环境
+    logger.info("测试Nginx配置并重启服务...")
     try:
-        subprocess.run("nginx -t", shell=True, check=True)
-        subprocess.run("systemctl restart nginx", shell=True, check=True)
-        logger.info("Nginx已重启，ModSecurity现已启用")
+        # 首先测试配置是否正确
+        subprocess.run("nginx -t", shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        logger.info("Nginx配置测试成功")
+        
+        # 采用不同的重启策略
+        restart_success = False
+        
+        # 1. 先尝试systemctl命令
+        try:
+            logger.info("尝试使用systemctl重启Nginx...")
+            subprocess.run("systemctl restart nginx", shell=True, check=True, 
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            restart_success = True
+            logger.info("使用systemctl重启Nginx成功")
+        except subprocess.CalledProcessError:
+            logger.warning("systemctl重启失败，尝试其他方法")
+        
+        # 2. 如果失败，尝试service命令
+        if not restart_success:
+            try:
+                logger.info("尝试使用service重启Nginx...")
+                subprocess.run("service nginx restart", shell=True, check=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                restart_success = True
+                logger.info("使用service重启Nginx成功")
+            except subprocess.CalledProcessError:
+                logger.warning("service重启失败，尝试其他方法")
+        
+        # 3. 如果在宝塔环境，尝试宝塔特定命令
+        if not restart_success and IS_BT_ENV:
+            try:
+                logger.info("在宝塔环境中尝试重启Nginx...")
+                subprocess.run("/etc/init.d/nginx restart", shell=True, check=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                restart_success = True
+                logger.info("使用宝塔方式重启Nginx成功")
+            except subprocess.CalledProcessError:
+                logger.warning("宝塔特定重启方式失败")
+                
+        # 4. 直接尝试nginx -s reload
+        if not restart_success:
+            try:
+                logger.info("尝试使用nginx -s reload重新加载配置...")
+                subprocess.run("nginx -s reload", shell=True, check=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                restart_success = True
+                logger.info("使用nginx -s reload重新加载成功")
+            except subprocess.CalledProcessError:
+                logger.warning("nginx -s reload 失败")
+        
+        if restart_success:
+            logger.info("Nginx已重启，ModSecurity现已启用")
+        else:
+            logger.error("所有重启方法均失败，请手动重启Nginx：")
+            logger.error("1. systemctl restart nginx")
+            logger.error("2. service nginx restart")
+            logger.error("3. /etc/init.d/nginx restart")
+            logger.error("4. nginx -s reload")
     except subprocess.CalledProcessError:
         logger.error("Nginx配置测试失败，请手动检查配置")
         sys.exit(1)
