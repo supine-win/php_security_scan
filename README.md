@@ -29,6 +29,7 @@
   - 大块编码数据
   - **编码内容输出**（如echo base64_decode形式的隐藏输出）
   - **多层编码链**（嵌套的编码/解码操作）
+- 提供自动安装ModSecurity的脚本，增强服务器安全性
   - **可疑函数**（包含编码解码操作的自定义函数）
   - **间接编码输出**（变量赋值后输出的隐藏方式）
   - **远程代码执行组合**（eval+file_get_contents+base64_decode组合）
@@ -267,6 +268,63 @@ CSV文件包含完整的详细结果，包括：
    ```bash
    # 从 GitHub 手动下载
    git clone https://github.com/supine-win/php_security_scan.git
+   ```
+
+## ModSecurity安装脚本
+
+本项目提供了一个用于安装和配置ModSecurity Web应用防火墙的脚本，专门针对已安装宝塔面板和Nginx的Linux服务器。
+
+### 支持的操作系统
+
+- CentOS 7/8/9
+- Rocky Linux 8/9
+- AlmaLinux 8/9
+- Ubuntu 20.04/22.04
+- Debian 10/11
+
+### 脚本特点
+
+- 自动检测服务器系统及宝塔环境
+- 优先使用Gitee镜像源，适合国内服务器
+- 自动安装OWASP ModSecurity核心规则集(CRS)
+- 配置Nginx使用ModSecurity防火墙
+- 防范常见Web攻击：SQL注入、XSS、CSRF、文件包含等
+
+### 使用方法
+
+只需要一行命令，就可以从远程仓库下载并运行安装脚本：
+
+```bash
+# 使用Gitee源（推荐国内服务器）
+ curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/install_modsecurity.sh | bash
+
+# 或者使用GitHub源
+ curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/install_modsecurity.sh | bash
+```
+
+您也可以手动下载并运行脚本：
+
+```bash
+# 下载脚本
+ wget https://gitee.com/supine-win/php_security_scan/raw/main/install_modsecurity.sh
+
+# 添加执行权限
+ chmod +x install_modsecurity.sh
+
+# 执行安装
+ ./install_modsecurity.sh
+```
+
+### 安装后验证
+
+安装完成后，可以使用以下命令验证ModSecurity是否正常工作：
+
+```bash
+# 测试XSS防护
+ curl -I "http://localhost/?param=<script>"
+
+# 如果返回403状态码，表示ModSecurity成功拦截攻击
+```
    cd php_security_scan
    python main.py /path/to/php/directory
    
