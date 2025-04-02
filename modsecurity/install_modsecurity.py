@@ -397,35 +397,53 @@ def install_modsecurity_nginx(force_update=False):
         # 添加ModSecurity模块
         modsec_nginx_path = os.path.join(BUILD_DIR, "modsecurity-nginx")
         
-        # 检查PCRE库是否存在，如果不存在则下载
-        pcre_dir = os.path.join(os.getcwd(), "pcre-8.43")
-        if not os.path.exists(pcre_dir):
+        # 检查是否已经有PCRE库文件夹
+        pcre_pattern = re.compile(r'pcre-\d+\.\d+')
+        pcre_dir_exists = False
+        
+        # 检查当前目录下是否存在PCRE库文件夹
+        for item in os.listdir(os.getcwd()):
+            if os.path.isdir(item) and pcre_pattern.match(item):
+                logger.info(f"检测到已存在PCRE库: {item}，跳过下载")
+                pcre_dir_exists = True
+                break
+        
+        if not pcre_dir_exists:
             logger.info("检测到缺少PCRE库，正在下载...")
             try:
-                # 下载PCRE库
-                pcre_url = "https://ftp.pcre.org/pub/pcre/pcre-8.43.tar.gz"
-                alt_pcre_url = "https://ftp.exim.org/pub/pcre/pcre-8.43.tar.gz"
-                pcre_file = os.path.join(os.getcwd(), "pcre-8.43.tar.gz")
+                # 尝试下载最新的PCRE库
+                pcre_urls = [
+                    "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz",
+                    "https://ftp.exim.org/pub/pcre/pcre-8.45.tar.gz",
+                    "https://ftp.pcre.org/pub/pcre/pcre-8.45.tar.gz"
+                ]
                 
-                try:
-                    logger.info(f"从{pcre_url}下载PCRE库...")
-                    subprocess.run(f"curl -L {pcre_url} -o {pcre_file}", shell=True, check=True)
-                except subprocess.CalledProcessError:
-                    logger.warning(f"从主源下载PCRE库失败，尝试备用源{alt_pcre_url}...")
-                    subprocess.run(f"curl -L {alt_pcre_url} -o {pcre_file}", shell=True, check=True)
+                downloaded = False
+                for url in pcre_urls:
+                    try:
+                        pcre_file = os.path.join(os.getcwd(), os.path.basename(url))
+                        logger.info(f"尝试从{url}下载PCRE库...")
+                        subprocess.run(f"curl -L {url} -o {pcre_file}", shell=True, check=True)
+                        
+                        # 解压PCRE库
+                        logger.info("解压PCRE库...")
+                        subprocess.run(f"tar -xzf {pcre_file}", shell=True, check=True)
+                        logger.info("PCRE库准备完成")
+                        
+                        downloaded = True
+                        break
+                    except subprocess.CalledProcessError:
+                        logger.warning(f"从{url}下载PCRE库失败，尝试下一个源...")
                 
-                # 解压PCRE库
-                logger.info("解压PCRE库...")
-                subprocess.run(f"tar -xzf {pcre_file}", shell=True, check=True)
-                logger.info("PCRE库准备完成")
+                if not downloaded:
+                    logger.error("所有PCRE库源下载失败")
+                    logger.warning("将尝试继续编译，但可能会失败")
             except Exception as e:
                 logger.error(f"下载PCRE库失败: {str(e)}")
                 logger.warning("将尝试继续编译，但可能会失败")
-        else:
-            logger.info("检测到PCRE库已存在，跳过下载")
         
-        # 构建编译命令，添加--with-pcre选项
-        # 注意：当在Nginx源码目录中存在pcre-8.43目录时，Nginx会优先使用该目录的PCRE库
+        # 构建编译命令
+        # 注意：当在Nginx源码目录中存在pcre-*目录时，Nginx会优先使用该目录的PCRE库
         compile_cmd = f"./configure {configure_args} --add-dynamic-module={modsec_nginx_path}"
         print(f"+++ 执行: {compile_cmd} +++")
         try:
