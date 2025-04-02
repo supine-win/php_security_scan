@@ -33,17 +33,26 @@
 
 ## 使用方法
 
+## 代码仓库
+
+- GitHub: [https://github.com/supine-win/php_security_scan](https://github.com/supine-win/php_security_scan/tree/main/php_scanner)
+- Gitee（国内镜像）: [https://gitee.com/supine-win/php_security_scan](https://gitee.com/supine-win/php_security_scan/tree/main/php_scanner)
+
 ### 一键运行
 
 ```bash
 # 基本用法（默认只启用第一个特征）
+# GitHub源
 curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/php_scanner/run.sh | sh -s -- /path/to/php/directory
 
+# 或者使用Gitee源（国内服务器推荐）
+curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/php_scanner/run.sh | sh -s -- /path/to/php/directory
+
 # 指定输出文件
-curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/php_scanner/run.sh | sh -s -- /path/to/php/directory -o output_results.csv
+curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/php_scanner/run.sh | sh -s -- /path/to/php/directory -o output_results.csv
 
 # 使用特定特征ID进行扫描（如1号、3号和5号特征）
-curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/php_scanner/run.sh | sh -s -- /path/to/php/directory -p 1,3,5
+curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/php_scanner/run.sh | sh -s -- /path/to/php/directory -p 1,3,5
 ```
 
 ### 本地使用
