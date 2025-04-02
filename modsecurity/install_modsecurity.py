@@ -609,12 +609,22 @@ def configure_modsecurity():
                 f.write("# This is a placeholder unicode.mapping file\n")
             logger.warning("创建了一个空的unicode.mapping文件，请手动配置")
     
-    # 修改配置以启用ModSecurity
+    # 修改配置以启用ModSecurity并修正路径
     with open(modsec_conf_dst, 'r') as file:
         conf_content = file.read()
     
     # 启用ModSecurity
     conf_content = conf_content.replace('SecRuleEngine DetectionOnly', 'SecRuleEngine On')
+    
+    # 修正unicode.mapping文件路径为绝对路径
+    unicode_map_file = os.path.join(modsec_dir, "unicode.mapping")
+    
+    # 通过正则表达式替换SecUnicodeMapFile指令的路径
+    pattern = r'SecUnicodeMapFile\s+[^\n]+'
+    replacement = f'SecUnicodeMapFile {unicode_map_file}'
+    conf_content = re.sub(pattern, replacement, conf_content)
+    
+    logger.info(f"将unicode.mapping路径设置为绝对路径: {unicode_map_file}")
     
     with open(modsec_conf_dst, 'w') as file:
         file.write(conf_content)
