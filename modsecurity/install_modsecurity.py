@@ -38,9 +38,15 @@ IS_BT_ENV = os.path.exists('/www/server/panel') or os.path.exists('/www/server/n
 # 根据环境设置Nginx路径
 if IS_BT_ENV:
     NGINX_PATH = "/www/server/nginx"
+    NGINX_BIN = "/www/server/nginx/sbin/nginx"
+    NGINX_CONF = "/www/server/nginx/conf/nginx.conf"
     logger.info(f"检测到宝塔环境，设置Nginx路径为: {NGINX_PATH}")
+    logger.info(f"Nginx可执行文件路径: {NGINX_BIN}")
+    logger.info(f"Nginx配置文件路径: {NGINX_CONF}")
 else:
     NGINX_PATH = "/etc/nginx"
+    NGINX_BIN = "/usr/sbin/nginx"
+    NGINX_CONF = "/etc/nginx/nginx.conf"
     logger.info(f"标准环境，设置Nginx路径为: {NGINX_PATH}")
 
 # 信号处理函数，确保在脚本被中断时清理临时文件
@@ -776,16 +782,25 @@ Include "{crs_path}/crs-setup.conf"
 Include "{crs_path}/rules/*.conf"
 """)
     
-    logger.info("ModSecurity配置完成，请将以下内容添加到您的Nginx主配置文件的顶层:")
-    logger.info(f"include {modsec_module_conf};")
-    logger.info("并将以下内容添加到http块:")
-    logger.info(f"include {modsec_nginx_conf};")
+    if IS_BT_ENV:
+        logger.info("宝塔环境ModSecurity配置完成，请按以下步骤手动修改Nginx配置文件:")
+        logger.info(f"1. 编辑宝塔Nginx主配置文件: {NGINX_CONF}")
+        logger.info(f"2. 在events块之前添加加载模块的命令: load_module {os.path.join(NGINX_PATH, 'modules/ngx_http_modsecurity_module.so')};")
+        logger.info(f"3. 在http块的开头添加: include {modsec_nginx_conf};")
+        logger.info("注意：宝塔面板可能会在重启时自动重置配置文件，请考虑使用宝塔的配置文件修改功能来确保更改持久化。")
+    else:
+        logger.info("ModSecurity配置完成，请将以下内容添加到您的Nginx主配置文件的顶层:")
+        logger.info(f"include {modsec_module_conf};")
+        logger.info("并将以下内容添加到http块:")
+        logger.info(f"include {modsec_nginx_conf};")
     
     # 重启Nginx - 兼容不同系统和环境
     logger.info("测试Nginx配置并重启服务...")
     try:
-        # 首先测试配置是否正确
-        subprocess.run("nginx -t", shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # 首先测试配置是否正确 - 使用适当的Nginx可执行文件路径
+        nginx_test_cmd = f"{NGINX_BIN} -t -c {NGINX_CONF}"
+        logger.info(f"执行配置测试命令: {nginx_test_cmd}")
+        subprocess.run(nginx_test_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         logger.info("Nginx配置测试成功")
         
         # 采用不同的重启策略
@@ -816,10 +831,21 @@ Include "{crs_path}/rules/*.conf"
         if not restart_success and IS_BT_ENV:
             try:
                 logger.info("在宝塔环境中尝试重启Nginx...")
-                subprocess.run("/etc/init.d/nginx restart", shell=True, check=True,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                restart_success = True
-                logger.info("使用宝塔方式重启Nginx成功")
+                
+                # 首先尝试宝塔面板命令
+                bt_restart_cmd = "/www/server/panel/plugin/nginx/nginx_main.py reload"
+                if os.path.exists("/www/server/panel/plugin/nginx/nginx_main.py"):
+                    logger.info(f"尝试使用宝塔面板命令: {bt_restart_cmd}")
+                    subprocess.run(bt_restart_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    restart_success = True
+                    logger.info("使用宝塔面板命令重启Nginx成功")
+                else:
+                    # 尝试直接使用宝塔Nginx可执行文件
+                    bt_nginx_cmd = f"{NGINX_BIN} -s reload"
+                    logger.info(f"尝试直接使用宝塔Nginx可执行文件: {bt_nginx_cmd}")
+                    subprocess.run(bt_nginx_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    restart_success = True
+                    logger.info("直接使用宝塔Nginx可执行文件重启成功")
             except subprocess.CalledProcessError:
                 logger.warning("宝塔特定重启方式失败")
                 
