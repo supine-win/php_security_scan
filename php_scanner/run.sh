@@ -1,12 +1,12 @@
 #!/bin/bash
 # PHP Security Scanner 一键运行脚本
-# 使用方法: curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/run.sh | sh -s -- /path/to/php/directory
+# 使用方法: curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/php_scanner/run.sh | sh -s -- /path/to/php/directory
 
 set -e
 
 # 检查参数
 if [ $# -lt 1 ]; then
-    echo "使用方法: curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/run.sh | sh -s -- /path/to/php/directory [options]"
+    echo "使用方法: curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/php_scanner/run.sh | sh -s -- /path/to/php/directory [options]"
     echo "请提供要扫描的PHP目录路径"
     exit 1
 fi
@@ -29,18 +29,18 @@ download_success=false
 
 # 尝试主要下载源（Gitee - 国内速度更快）
 echo "尝试下载源 1/3: Gitee..."
-curl -m 30 -sSL https://gitee.com/supine-win/php_security_scan/raw/main/main.py -o "$TEMP_DIR/main.py" && download_success=true
+curl -m 30 -sSL https://gitee.com/supine-win/php_security_scan/raw/main/php_scanner/main.py -o "$TEMP_DIR/main.py" && download_success=true
 
 # 如果失败，尝试JSDelivr CDN
 if [ "$download_success" != "true" ]; then
     echo "下载失败，尝试备用源 2/3: JSDelivr CDN..."
-    curl -m 30 -sSL https://cdn.jsdelivr.net/gh/supine-win/php_security_scan@main/main.py -o "$TEMP_DIR/main.py" && download_success=true
+    curl -m 30 -sSL https://cdn.jsdelivr.net/gh/supine-win/php_security_scan@main/php_scanner/main.py -o "$TEMP_DIR/main.py" && download_success=true
 fi
 
 # 如果仍然失败，尝试GitHub源
 if [ "$download_success" != "true" ]; then
     echo "下载失败，尝试备用源 3/3: GitHub..."
-    curl -m 30 -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/main.py -o "$TEMP_DIR/main.py" && download_success=true
+    curl -m 30 -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/php_scanner/main.py -o "$TEMP_DIR/main.py" && download_success=true
 fi
 
 # 检查下载是否成功

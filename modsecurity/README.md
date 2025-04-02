@@ -1,0 +1,76 @@
+# ModSecurity安装脚本
+
+这个脚本用于在安装了宝塔面板和Nginx的Linux服务器上自动安装和配置ModSecurity Web应用防火墙。脚本优先使用Gitee镜像源，适合国内服务器环境。
+
+## 支持的操作系统
+
+- CentOS 7/8/9
+- Rocky Linux 8/9
+- AlmaLinux 8/9
+- Ubuntu 20.04/22.04
+- Debian 10/11
+
+## 脚本特点
+
+- 自动检测服务器系统及宝塔环境
+- 优先使用Gitee镜像源，适合国内服务器
+- 自动安装OWASP ModSecurity核心规则集(CRS)
+- 配置Nginx使用ModSecurity防火墙
+- 防范常见Web攻击：SQL注入、XSS、CSRF、文件包含等
+- 提供彩色输出和详细安装日志
+- 安装完成后自动重启Nginx服务
+
+## 使用方法
+
+只需要一行命令，就可以从远程仓库下载并运行安装脚本：
+
+```bash
+# 使用Gitee源（推荐国内服务器）
+curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity/install_modsecurity.sh | bash
+
+# 或者使用GitHub源
+curl -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/modsecurity/install_modsecurity.sh | bash
+```
+
+您也可以手动下载并运行脚本：
+
+```bash
+# 下载脚本
+wget https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity/install_modsecurity.sh
+
+# 添加执行权限
+chmod +x install_modsecurity.sh
+
+# 执行安装
+./install_modsecurity.sh
+```
+
+## 安装后验证
+
+安装完成后，可以使用以下命令验证ModSecurity是否正常工作：
+
+```bash
+# 测试XSS防护
+curl -I "http://localhost/?param=<script>"
+
+# 如果返回403状态码，表示ModSecurity成功拦截攻击
+```
+
+## 安装细节
+
+脚本安装的组件包括：
+- ModSecurity核心库
+- ModSecurity-nginx连接器
+- OWASP ModSecurity核心规则集(CRS)
+- Nginx集成配置
+
+安装位置：
+- ModSecurity模块：`/www/server/nginx/modules/ngx_http_modsecurity_module.so`（宝塔环境）
+- 规则配置目录：`/etc/nginx/modsecurity/`
+- OWASP CRS规则：`/etc/nginx/modsecurity-crs/`
+- Nginx配置：`/etc/nginx/conf.d/modsecurity.conf`
+
+## 调整和故障排除
+
+如需调整规则，请编辑：`/etc/nginx/modsecurity/modsecurity.conf`
+详细安装日志位于：`/tmp/modsecurity_install.log`
