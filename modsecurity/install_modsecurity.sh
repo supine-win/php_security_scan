@@ -95,7 +95,10 @@ echo "检查并安装必要的依赖包..."
 
 # 执行Python脚本
 echo "开始执行安装..."
-python3 "$TEMP_DIR/install_modsecurity.py"
+
+# 将命令行参数传递给Python脚本
+echo "命令行参数: $@"
+python3 "$TEMP_DIR/install_modsecurity.py" "$@"
 
 # 检查执行结果
 if [ $? -eq 0 ]; then

@@ -45,6 +45,38 @@ chmod +x install_modsecurity.sh
 ./install_modsecurity.sh
 ```
 
+## 命令行参数
+
+脚本支持以下命令行参数：
+
+```bash
+# 强制重新编译ModSecurity模块，即使已存在也会更新
+python3 install_modsecurity.py -f
+# 或者
+python3 install_modsecurity.py --force
+
+# 显示详细的安装日志信息
+python3 install_modsecurity.py -v
+# 或者
+python3 install_modsecurity.py --verbose
+
+# 可以组合使用多个参数
+python3 install_modsecurity.py -f -v
+```
+
+如果使用一键安装脚本，您可以如下传递参数：
+
+```bash
+# 强制更新模式
+curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity/install_modsecurity.sh | bash -s -- -f
+
+# 详细模式
+curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity/install_modsecurity.sh | bash -s -- -v
+
+# 同时启用强制更新和详细模式
+curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity/install_modsecurity.sh | bash -s -- -f -v
+```
+
 ## 安装后验证
 
 安装完成后，可以使用以下命令验证ModSecurity是否正常工作：
