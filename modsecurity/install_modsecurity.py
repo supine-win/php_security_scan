@@ -79,44 +79,58 @@ def download_modsecurity():
     logger.info("下载ModSecurity...")
     os.chdir(BUILD_DIR)
     
-    # 优先尝试从supine-win的Gitee镜像下载
-    try:
-        subprocess.run("git clone https://gitee.com/supine-win/ModSecurity.git modsecurity", 
-                     shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        logger.info("从supine-win的Gitee镜像下载ModSecurity成功")
-    except subprocess.CalledProcessError:
-        logger.warning("从supine-win的镜像下载失败，尝试官方Gitee镜像")
-        try:
-            subprocess.run("git clone https://gitee.com/mirrors/ModSecurity.git modsecurity", 
-                         shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            logger.info("从Gitee镜像下载ModSecurity成功")
-        except subprocess.CalledProcessError:
-            logger.warning("从Gitee镜像下载失败，尝试从GitHub下载")
-            try:
-                subprocess.run("git clone https://github.com/SpiderLabs/ModSecurity.git modsecurity", 
-                             shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                logger.info("从GitHub下载ModSecurity成功")
-            except subprocess.CalledProcessError:
-                logger.error("下载ModSecurity失败")
-                sys.exit(1)
+    # 设置ModSecurity版本
+    MODSEC_VERSION = "3.0.9"
     
-    # 编译并安装ModSecurity
+    # 创建下载目录
+    modsec_dir = os.path.join(BUILD_DIR, "modsecurity")
+    os.makedirs(modsec_dir, exist_ok=True)
+    os.chdir(modsec_dir)
+    
+    # 下载预编译的版本
+    download_success = False
+    
+    # 尝试从supine-win的Gitee仓库下载预编译版本
     try:
-        os.chdir(os.path.join(BUILD_DIR, "modsecurity"))
+        logger.info(f"尝试从supine-win的Gitee镜像下载ModSecurity v{MODSEC_VERSION}...")
+        download_url = f"https://gitee.com/supine-win/ModSecurity/releases/download/v{MODSEC_VERSION}/modsecurity-v{MODSEC_VERSION}-linux-x64.tar.gz"
+        subprocess.run(f"wget -q {download_url} -O modsecurity.tar.gz", shell=True, check=True)
+        download_success = True
+        logger.info("从supine-win的Gitee镜像下载ModSecurity预编译版本成功")
+    except subprocess.CalledProcessError:
+        logger.warning("从supine-win的Gitee镜像下载预编译版本失败，尝试GitHub官方发布版本")
+    
+    # 如果下载失败，尝试从GitHub下载
+    if not download_success:
+        try:
+            logger.info(f"尝试从GitHub下载ModSecurity v{MODSEC_VERSION}...")
+            download_url = f"https://github.com/SpiderLabs/ModSecurity/releases/download/v{MODSEC_VERSION}/modsecurity-v{MODSEC_VERSION}.tar.gz"
+            subprocess.run(f"wget -q {download_url} -O modsecurity.tar.gz", shell=True, check=True)
+            download_success = True
+            logger.info("从GitHub下载ModSecurity成功")
+        except subprocess.CalledProcessError:
+            logger.error("无法下载ModSecurity发布版本")
+            sys.exit(1)
+    
+    # 解压安装ModSecurity
+    try:
+        logger.info("正在解压安装ModSecurity...")
+        subprocess.run("tar -xzf modsecurity.tar.gz --strip-components=1", shell=True, check=True)
         
-        # 初始化子模块
-        subprocess.run("git submodule init", shell=True, check=True)
-        subprocess.run("git submodule update", shell=True, check=True)
+        # 安装依赖
+        if get_distro_family() == 'rhel':
+            subprocess.run("yum install -y libxml2-devel curl-devel pcre-devel", shell=True, check=True)
+        else:  # debian
+            subprocess.run("apt-get update && apt-get install -y libxml2-dev libcurl4-openssl-dev libpcre3-dev", shell=True, check=True)
         
-        # 构建和编译
-        subprocess.run("./build.sh", shell=True, check=True)
+        # 运行配置和安装
         subprocess.run("./configure", shell=True, check=True)
         subprocess.run("make", shell=True, check=True)
         subprocess.run("make install", shell=True, check=True)
         
-        logger.info("ModSecurity编译安装完成")
+        logger.info("ModSecurity安装完成")
     except subprocess.CalledProcessError as e:
-        logger.error(f"ModSecurity编译安装失败: {e}")
+        logger.error(f"ModSecurity安装失败: {e}")
         sys.exit(1)
 
 # 下载和安装ModSecurity-nginx连接器
@@ -125,42 +139,73 @@ def install_modsecurity_nginx():
     logger.info("下载ModSecurity-nginx连接器...")
     os.chdir(BUILD_DIR)
     
-    # 优先尝试从supine-win的Gitee镜像下载
-    try:
-        subprocess.run("git clone https://gitee.com/supine-win/ModSecurity-nginx.git modsecurity-nginx", 
-                     shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        logger.info("从supine-win的Gitee镜像下载ModSecurity-nginx成功")
-    except subprocess.CalledProcessError:
-        logger.warning("从supine-win的镜像下载失败，尝试官方Gitee镜像")
-        try:
-            subprocess.run("git clone https://gitee.com/mirrors/ModSecurity-nginx.git modsecurity-nginx", 
-                         shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            logger.info("从Gitee镜像下载ModSecurity-nginx成功")
-        except subprocess.CalledProcessError:
-            logger.warning("从Gitee镜像下载失败，尝试从GitHub下载")
-            try:
-                subprocess.run("git clone https://github.com/SpiderLabs/ModSecurity-nginx.git modsecurity-nginx", 
-                             shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                logger.info("从GitHub下载ModSecurity-nginx成功")
-            except subprocess.CalledProcessError:
-                logger.error("下载ModSecurity-nginx失败")
-                sys.exit(1)
+    # 设置ModSecurity-nginx版本
+    MODSEC_NGINX_VERSION = "1.0.3"
     
-    # 获取Nginx版本和源码
+    # 创建下载目录
+    modsec_nginx_dir = os.path.join(BUILD_DIR, "modsecurity-nginx")
+    os.makedirs(modsec_nginx_dir, exist_ok=True)
+    os.chdir(modsec_nginx_dir)
+    
+    # 下载预编译的版本
+    download_success = False
+    
+    # 尝试从supine-win的Gitee仓库下载预编译版本
     try:
+        logger.info(f"尝试从supine-win的Gitee镜像下载ModSecurity-nginx v{MODSEC_NGINX_VERSION}...")
+        download_url = f"https://gitee.com/supine-win/ModSecurity-nginx/releases/download/v{MODSEC_NGINX_VERSION}/modsecurity-nginx-v{MODSEC_NGINX_VERSION}.tar.gz"
+        subprocess.run(f"wget -q {download_url} -O modsecurity-nginx.tar.gz", shell=True, check=True)
+        download_success = True
+        logger.info("从supine-win的Gitee镜像下载ModSecurity-nginx预编译版本成功")
+    except subprocess.CalledProcessError:
+        logger.warning("从supine-win的Gitee镜像下载预编译版本失败，尝试GitHub官方发布版本")
+    
+    # 如果不能下载预编译版本，尝试从GitHub下载源码包
+    if not download_success:
+        try:
+            logger.info(f"尝试从GitHub下载ModSecurity-nginx v{MODSEC_NGINX_VERSION}...")
+            download_url = f"https://github.com/owasp-modsecurity/ModSecurity-nginx/archive/refs/tags/v{MODSEC_NGINX_VERSION}.tar.gz"
+            subprocess.run(f"wget -q {download_url} -O modsecurity-nginx.tar.gz", shell=True, check=True)
+            download_success = True
+            logger.info("从GitHub下载ModSecurity-nginx成功")
+        except subprocess.CalledProcessError:
+            logger.error("无法下载ModSecurity-nginx发布版本")
+            sys.exit(1)
+    
+    # 解压ModSecurity-nginx源码
+    try:
+        logger.info("正在解压ModSecurity-nginx...")
+        subprocess.run("tar -xzf modsecurity-nginx.tar.gz --strip-components=1", shell=True, check=True)
+        logger.info("解压ModSecurity-nginx成功")
+        
+        # 获取Nginx版本和源码
         nginx_version_output = subprocess.check_output("nginx -v", shell=True, stderr=subprocess.STDOUT).decode()
         import re
         nginx_version = re.search(r'nginx/(\d+\.\d+\.\d+)', nginx_version_output).group(1)
         logger.info(f"检测到Nginx版本: {nginx_version}")
         
         # 下载Nginx源码
+        logger.info(f"下载Nginx v{nginx_version} 源码...")
         os.chdir(BUILD_DIR)
         nginx_src_url = f"http://nginx.org/download/nginx-{nginx_version}.tar.gz"
-        subprocess.run(f"wget {nginx_src_url} -O nginx.tar.gz", shell=True, check=True)
+        
+        # 尝试不同的源下载Nginx
+        try:
+            # 尝试Gitee镜像
+            gitee_nginx_url = f"https://gitee.com/mirrors/nginx/raw/master/nginx-{nginx_version}.tar.gz"
+            subprocess.run(f"wget -q {gitee_nginx_url} -O nginx.tar.gz", shell=True, check=True)
+            logger.info("从Gitee镜像下载Nginx源码成功")
+        except subprocess.CalledProcessError:
+            # 如果失败，使用原始链接
+            logger.warning("从Gitee镜像下载Nginx失败，尝试官方源")
+            subprocess.run(f"wget -q {nginx_src_url} -O nginx.tar.gz", shell=True, check=True)
+            logger.info("从nginx.org下载Nginx源码成功")
+        
         subprocess.run("tar -xzf nginx.tar.gz", shell=True, check=True)
         nginx_src_dir = f"nginx-{nginx_version}"
         
         # 编译Nginx模块
+        logger.info("开始编译Nginx ModSecurity模块...")
         os.chdir(os.path.join(BUILD_DIR, nginx_src_dir))
         
         # 获取编译参数
@@ -174,6 +219,7 @@ def install_modsecurity_nginx():
         compile_cmd = f"./configure {configure_args} --add-dynamic-module={modsec_nginx_path}"
         subprocess.run(compile_cmd, shell=True, check=True)
         subprocess.run("make modules", shell=True, check=True)
+        logger.info("编译Nginx ModSecurity模块成功")
         
         # 创建模块目录并复制模块
         modules_dir = os.path.join(NGINX_PATH, "modules")
