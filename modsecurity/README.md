@@ -82,8 +82,8 @@ curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity/in
 安装完成后，可以使用以下命令验证ModSecurity是否正常工作：
 
 ```bash
-# 测试XSS防护
-curl -I "http://localhost/?param=<script>"
+# 测试XSS防护 (使用URL编码的参数避免curl自动转义)
+curl -I "http://localhost/?param=%3Cscript%3E"
 
 # 如果返回403状态码，表示ModSecurity成功拦截攻击
 ```
@@ -97,7 +97,7 @@ curl -I "http://localhost/?param=<script>"
 - Nginx集成配置
 
 安装位置：
-- ModSecurity模块：`/www/server/nginx/modules/ngx_http_modsecurity_module.so`（宝塔环境）
+- ModSecurity模块：标准环境为`/etc/nginx/modules/ngx_http_modsecurity_module.so`，宝塔环境为`/www/server/nginx/modules/ngx_http_modsecurity_module.so`
 - 规则配置目录：`/etc/nginx/modsecurity/`
 - OWASP CRS规则：`/etc/nginx/modsecurity-crs/`
 - Nginx配置：`/etc/nginx/conf.d/modsecurity.conf`
@@ -105,4 +105,4 @@ curl -I "http://localhost/?param=<script>"
 ## 调整和故障排除
 
 如需调整规则，请编辑：`/etc/nginx/modsecurity/modsecurity.conf`
-详细安装日志位于：`/tmp/modsecurity_install.log`
+详细安装日志会在安装完成时显示其完整路径，通常在临时目录中
