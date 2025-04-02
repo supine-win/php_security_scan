@@ -72,8 +72,10 @@ def install_dependencies():
             "pcre-devel", "libxml2-devel", "curl-devel", "openssl-devel", 
             "yajl-devel", "libmaxminddb-devel", "lua-devel",
             # 添加更多必要的开发包
-            "zlib-devel", "gd-devel", "perl-devel", "perl-ExtUtils-Embed", "geoip-devel",
-            "kernel-devel", "cmake"
+            "zlib-devel", "gd-devel", "perl-devel", "perl-ExtUtils-Embed",
+            "kernel-devel", "cmake", 
+            # 添加GeoIP库的依赖，修复“the GeoIP module requires the GeoIP library”错误
+            "GeoIP", "GeoIP-devel"
         ]
         # 如果未安装nginx且不是宝塔环境，添加nginx依赖
         if not nginx_installed and not is_bt_env:
@@ -89,7 +91,9 @@ def install_dependencies():
             "libpcre3-dev", "libxml2-dev", "libcurl4-openssl-dev", "libssl-dev", 
             "libyajl-dev", "libmaxminddb-dev", "liblua5.3-dev",
             # 添加更多必要的开发包，特别是Ubuntu系统需要的
-            "zlib1g-dev", "gcc", "g++", "make", "cmake", "pkg-config"
+            "zlib1g-dev", "gcc", "g++", "make", "cmake", "pkg-config",
+            # 添加GeoIP库的依赖，修复“the GeoIP module requires the GeoIP library”错误
+            "libgeoip-dev", "libgeoip1"
         ]
         # 如果未安装nginx且不是宝塔环境，添加nginx依赖
         if not nginx_installed and not is_bt_env:
@@ -257,6 +261,11 @@ def install_modsecurity_nginx():
         # 获取编译参数
         configure_args = subprocess.check_output("nginx -V", shell=True, stderr=subprocess.STDOUT).decode()
         configure_args = re.search(r'configure arguments: (.*)', configure_args).group(1)
+        
+        # 从参数中移除GeoIP相关模块，避免“the GeoIP module requires the GeoIP library”错误
+        configure_args = re.sub(r'--with-http_geoip_module[=\w]*', '', configure_args)
+        configure_args = re.sub(r'--with-stream_geoip_module[=\w]*', '', configure_args)
+        logger.info("已禁用GeoIP模块，避免兼容性问题")
         
         # 添加ModSecurity模块
         modsec_nginx_path = os.path.join(BUILD_DIR, "modsecurity-nginx")
