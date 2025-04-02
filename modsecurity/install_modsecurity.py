@@ -832,20 +832,33 @@ Include "{crs_path}/rules/*.conf"
             try:
                 logger.info("在宝塔环境中尝试重启Nginx...")
                 
-                # 首先尝试宝塔面板命令
-                bt_restart_cmd = "/www/server/panel/plugin/nginx/nginx_main.py reload"
-                if os.path.exists("/www/server/panel/plugin/nginx/nginx_main.py"):
-                    logger.info(f"尝试使用宝塔面板命令: {bt_restart_cmd}")
-                    subprocess.run(bt_restart_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                # 首先使用宝塔标准重启命令
+                bt_init_restart_cmd = "/etc/init.d/nginx reload"
+                logger.info(f"尝试使用宝塔标准重启命令: {bt_init_restart_cmd}")
+                subprocess.run(bt_init_restart_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                restart_success = True
+                logger.info("使用宝塔标准重启命令成功")
+            except subprocess.CalledProcessError:
+                logger.warning("宝塔标准重启命令失败，尝试启动Nginx...")
+                try:
+                    # 如果Nginx未运行，尝试启动
+                    bt_init_start_cmd = "/etc/init.d/nginx start"
+                    logger.info(f"尝试启动Nginx: {bt_init_start_cmd}")
+                    subprocess.run(bt_init_start_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     restart_success = True
-                    logger.info("使用宝塔面板命令重启Nginx成功")
-                else:
+                    logger.info("启动Nginx成功")
+                except subprocess.CalledProcessError:
+                    logger.warning("宝塔Nginx启动命令失败，尝试其他方法")
+                    
                     # 尝试直接使用宝塔Nginx可执行文件
                     bt_nginx_cmd = f"{NGINX_BIN} -s reload"
                     logger.info(f"尝试直接使用宝塔Nginx可执行文件: {bt_nginx_cmd}")
-                    subprocess.run(bt_nginx_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    restart_success = True
-                    logger.info("直接使用宝塔Nginx可执行文件重启成功")
+                    try:
+                        subprocess.run(bt_nginx_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        restart_success = True
+                        logger.info("直接使用宝塔Nginx可执行文件重启成功")
+                    except subprocess.CalledProcessError:
+                        logger.warning("所有宝塔重启方法均失败")
             except subprocess.CalledProcessError:
                 logger.warning("宝塔特定重启方式失败")
                 
