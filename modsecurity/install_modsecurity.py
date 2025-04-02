@@ -157,6 +157,11 @@ def download_modsecurity():
             logger.error("无法下载ModSecurity源码，请检查网络连接")
             sys.exit(1)
     
+    # 检查模块文件是否已存在
+    modules_dir = os.path.join(NGINX_PATH, "modules")
+    module_file = os.path.join(modules_dir, "ngx_http_modsecurity_module.so")
+    module_exists = os.path.exists(module_file)
+
     # 编译并安装ModSecurity
     try:
         os.chdir(os.path.join(BUILD_DIR, "modsecurity"))
@@ -168,6 +173,12 @@ def download_modsecurity():
         print("+++ 执行: git submodule update +++")
         subprocess.run("git submodule update", shell=True, check=True)
         
+        # 如果模块已存在，跳过编译步骤
+        if module_exists:
+            logger.info(f"检测到ModSecurity模块已存在: {module_file}")
+            logger.info("跳过ModSecurity的编译和安装步骤")
+            return
+            
         # 构建和编译
         logger.info("开始编译ModSecurity...")
         print("+++ 执行: ./build.sh +++")
