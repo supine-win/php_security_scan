@@ -262,6 +262,30 @@ def install_modsecurity_nginx():
         configure_args = subprocess.check_output("nginx -V", shell=True, stderr=subprocess.STDOUT).decode()
         configure_args = re.search(r'configure arguments: (.*)', configure_args).group(1)
         
+        # 如果系统中没有libperl-dev包，移除perl模块选项减少编译问题
+        if "--with-http_perl_module" in configure_args or "--with-http_perl_module=dynamic" in configure_args:
+            # 尝试检查libperl-dev是否安装
+            perl_dev_installed = False
+            try:
+                if distro_family == 'debian':
+                    result = subprocess.run("dpkg -l | grep libperl-dev", shell=True, 
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    perl_dev_installed = result.returncode == 0
+                elif distro_family == 'rhel':
+                    result = subprocess.run("rpm -qa | grep perl-devel", shell=True, 
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    perl_dev_installed = result.returncode == 0
+            except:
+                pass
+                
+            if not perl_dev_installed:
+                # 如果未安装，由于PERL模块常常导致问题，这里选择移除Perl模块
+                logger.warning("检测到Nginx配置中含有Perl模块，但系统中没有完整的Perl开发环境")
+                logger.warning("为确保成功编译，将从配置中移除Perl模块")
+                # 从配置中移除Perl模块
+                configure_args = re.sub(r'--with-http_perl_module[=\w]*', '', configure_args)
+                logger.info("已禁用Perl模块，以确保编译成功")
+        
         # 确保GeoIP库已安装，而不是移除GeoIP模块
         logger.info("确保安装GeoIP库以支持GeoIP模块...")
         
@@ -271,14 +295,26 @@ def install_modsecurity_nginx():
         # 确保安装GeoIP库
         try:
             if distro_family == 'debian':
+                # 安装GeoIP相关库
                 geoip_packages = ["libgeoip-dev", "libgeoip1", "geoip-bin"]
                 print(f"+++ 执行: apt-get install -y {' '.join(geoip_packages)} +++")
                 subprocess.run(["apt-get", "install", "-y"] + geoip_packages, check=True)
+                
+                # 安装Perl开发库，解决 "cannot find -lperl" 错误
+                perl_packages = ["libperl-dev", "perl"]
+                print(f"+++ 执行: apt-get install -y {' '.join(perl_packages)} +++")
+                subprocess.run(["apt-get", "install", "-y"] + perl_packages, check=True)
                 logger.info("已安装Debian/Ubuntu系统的GeoIP库")
             elif distro_family == 'rhel':
+                # 安装GeoIP相关库
                 geoip_packages = ["GeoIP", "GeoIP-devel", "geoipupdate"]
                 print(f"+++ 执行: yum install -y {' '.join(geoip_packages)} +++")
                 subprocess.run(["yum", "install", "-y"] + geoip_packages, check=True)
+                
+                # 安装Perl开发库，解决 "cannot find -lperl" 错误
+                perl_packages = ["perl", "perl-devel", "perl-ExtUtils-Embed"]
+                print(f"+++ 执行: yum install -y {' '.join(perl_packages)} +++")
+                subprocess.run(["yum", "install", "-y"] + perl_packages, check=True)
                 logger.info("已安装CentOS/RHEL系统的GeoIP库")
             else:
                 logger.warning("无法识别系统类型，请手动安装GeoIP库")
