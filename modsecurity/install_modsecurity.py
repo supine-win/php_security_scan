@@ -873,11 +873,12 @@ Include "{crs_path}/rules/*.conf"
             except subprocess.CalledProcessError:
                 logger.warning("宝塔特定重启方式失败")
                 
-        # 4. 直接尝试nginx -s reload
+        # 4. 直接尝试nginx -s reload (指定配置文件路径)
         if not restart_success:
             try:
-                logger.info("尝试使用nginx -s reload重新加载配置...")
-                subprocess.run("nginx -s reload", shell=True, check=True,
+                nginx_reload_cmd = f"nginx -c {NGINX_CONF} -s reload"
+                logger.info(f"尝试使用指定配置的nginx重载命令: {nginx_reload_cmd}")
+                subprocess.run(nginx_reload_cmd, shell=True, check=True,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 restart_success = True
                 logger.info("使用nginx -s reload重新加载成功")
@@ -888,10 +889,13 @@ Include "{crs_path}/rules/*.conf"
             logger.info("Nginx已重启，ModSecurity现已启用")
         else:
             logger.error("所有重启方法均失败，请手动重启Nginx：")
-            logger.error("1. systemctl restart nginx")
-            logger.error("2. service nginx restart")
-            logger.error("3. /etc/init.d/nginx restart")
-            logger.error("4. nginx -s reload")
+            if IS_BT_ENV:
+                logger.error(f"1. {NGINX_BIN} -c {NGINX_CONF} -s reload")
+                logger.error(f"2. {NGINX_BIN} -c {NGINX_CONF}")
+            else:
+                logger.error("1. systemctl restart nginx")
+                logger.error("2. service nginx restart")
+                logger.error(f"3. nginx -c {NGINX_CONF} -s reload")
     except subprocess.CalledProcessError:
         logger.error("Nginx配置测试失败，请手动检查配置")
         sys.exit(1)
