@@ -575,6 +575,10 @@ def install_dependencies():
             logger.info("将安装Nginx服务器")
         else:
             logger.info("跳过Nginx安装，使用现有Nginx")
+            
+        # 定义关键依赖包，这些是编译必须的
+        critical_deps = ["build-essential", "libpcre3-dev", "libxml2-dev", "libcurl4-openssl-dev"]
+        
         cmd = f"apt update && apt install -y {' '.join(dependencies)}"
     else:
         logger.error("不支持的系统类型")
@@ -610,10 +614,11 @@ def install_dependencies():
                 raise subprocess.CalledProcessError(process.returncode, cmd, output=stdout, stderr=stderr)
             
             # 检测是否有缺失的包
-            if "No package" in stderr or "nothing provides" in stderr.lower():
+            if "No package" in stderr or "nothing provides" in stderr.lower() or "E: Unable to locate package" in stderr:
                 # 提取缺失的包名称
                 missing_package_matches = re.findall(r'No package ([\w-]+) available', stderr)
                 missing_package_matches.extend(re.findall(r'nothing provides ([\w-]+) needed', stderr.lower()))
+                missing_package_matches.extend(re.findall(r'E: Unable to locate package ([\w-]+)', stderr))
                 
                 for pkg in missing_package_matches:
                     missing_packages.append(pkg)
@@ -635,6 +640,20 @@ def install_dependencies():
                         except subprocess.CalledProcessError:
                             missing_packages.append(dep)
                             logger.warning(f"无法安装依赖: {dep}")
+                
+                # 对于Debian/Ubuntu系统，单独再次尝试安装关键依赖
+                if distro_family == 'debian' and 'critical_deps' in locals():
+                    logger.info("尝试单独安装关键编译依赖...")
+                    for critical_dep in critical_deps:
+                        if critical_dep not in missing_packages:
+                            try:
+                                install_cmd = f"apt install -y {critical_dep}"
+                                subprocess.run(install_cmd, shell=True, check=True,
+                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                logger.info(f"成功安装关键依赖: {critical_dep}")
+                            except subprocess.CalledProcessError:
+                                missing_packages.append(critical_dep)
+                                logger.warning(f"无法安装关键依赖: {critical_dep}")
         else:
             logger.info("依赖安装完成")
     except subprocess.CalledProcessError as e:
@@ -645,6 +664,13 @@ def install_dependencies():
     # 如果有缺失的包，给出具体的解决方案
     if missing_packages:
         logger.warning(f"共有 {len(missing_packages)} 个依赖包无法安装: {', '.join(missing_packages)}")
+        
+        # 检查是否缺失关键依赖
+        critical_missing = False
+        if distro_family == 'debian' and 'critical_deps' in locals():
+            critical_missing = any(dep in missing_packages for dep in critical_deps)
+            if critical_missing:
+                logger.warning("安装无法成功编译ModSecurity所需的关键依赖")
         
         # RHEL系统特定的建议
         if distro_family == 'rhel':
@@ -660,6 +686,7 @@ def install_dependencies():
             logger.info("对于Debian/Ubuntu系统，可尝试以下方法来安装缺失的依赖:")
             logger.info("1. 激活额外的软件源: sudo apt-add-repository universe")
             logger.info("2. 更新软件源列表: sudo apt update")
+            logger.info("3. 手动安装关键编译包: sudo apt install build-essential libpcre3-dev libxml2-dev libcurl4-openssl-dev")
             
         logger.info("脚本将继续执行，但可能会在编译过程中遇到问题")
 
@@ -683,7 +710,8 @@ def download_modsecurity(force_update=False):
                      shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         logger.info("从supine-win的Gitee镜像下载ModSecurity源码成功")
         download_success = True
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as e:
+        logger.error(f"从supine-win的镜像下载ModSecurity源码失败: {e}")
         logger.warning("从supine-win的镜像下载失败，尝试官方Gitee镜像")
         download_success = False
     
@@ -1015,13 +1043,26 @@ def install_modsecurity_nginx(force_update=False):
                     missing_deps.append("缺少依赖库")
                 if "error: C" in stderr:
                     missing_deps.append("编译器错误")
+                if "fatal error:" in stderr and ".h" in stderr:
+                    # 寻找缺失的头文件
+                    missing_headers = re.findall(r'fatal error: ([\w\/\.]+\.h)', stderr)
+                    if missing_headers:
+                        for header in missing_headers:
+                            missing_deps.append(f"缺少头文件 {header}")
                     
                 error_msg = "编译配置失败"
                 if missing_deps:
                     error_msg += ": " + ", ".join(missing_deps)
                 
                 logger.error(f"{error_msg}\n请检查编译环境并确保所有依赖项已安装")
-                logger.error("请尝试手动安装以下开发包: build-essential libpcre3-dev libxml2-dev libcurl4-openssl-dev")
+                
+                # 根据系统类型提供不同的建议
+                if distro_family == 'debian':
+                    logger.error("请尝试手动安装以下开发包: build-essential libpcre3-dev libxml2-dev libcurl4-openssl-dev")
+                    logger.error("您可能需要运行: sudo apt update && sudo apt upgrade -y")
+                else:  # rhel
+                    logger.error("请尝试手动安装以下开发包: gcc gcc-c++ make automake pcre-devel libxml2-devel curl-devel")
+                
                 sys.exit(1)
         
             print("+++ 执行: make modules +++")
