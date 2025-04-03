@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+ModSecurity安装脚本 - 优化版
+支持多种Linux发行版，自动处理依赖关系、源码下载和编译安装
+特别支持CentOS 7 EOL环境和宝塔面板环境
+"""
+
 import os
 import sys
 import subprocess
@@ -14,57 +20,148 @@ import argparse
 import glob
 import re
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger('ModSecurity')
+#############################################################
+# 常量定义 - 便于统一维护和修改
+#############################################################
 
-# 创建文件处理器
-log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "modsecurity_install.log")
-file_handler = logging.FileHandler(log_file)
-file_handler.setLevel(logging.DEBUG)
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(file_handler)
+# 软件版本
+MODSEC_VERSION = "3.0.14"
+PCRE_VERSION = "8.45"
 
-# 全局变量
-BUILD_DIR = os.path.join(tempfile.gettempdir(), "modsecurity_build")
+# 路径常量
+DEFAULT_REPOS_CACHE = os.path.expanduser("~/.modsecurity_repos")
+DEFAULT_BUILD_DIR = os.path.join(tempfile.gettempdir(), "modsecurity_build")
+DEFAULT_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "modsecurity_install.log")
 
-# 检测是否为宝塔环境
-IS_BT_ENV = os.path.exists('/www/server/panel') or os.path.exists('/www/server/nginx')
+# 宝塔相关路径
+BT_PANEL_PATHS = ['/www/server/panel', '/www/server/nginx']
+BT_NGINX_PATH = "/www/server/nginx"
+BT_NGINX_BIN = "/www/server/nginx/sbin/nginx"
+BT_NGINX_CONF = "/www/server/nginx/conf/nginx.conf"
+BT_MODSEC_DIR = "/www/server/nginx/modsecurity"
+BT_CRS_DIR = "/www/server/nginx/modsecurity-crs"
+BT_MODULES_DIR = "/www/server/nginx/modules"
 
-# 根据环境设置Nginx路径
-if IS_BT_ENV:
-    NGINX_PATH = "/www/server/nginx"
-    NGINX_BIN = "/www/server/nginx/sbin/nginx"
-    NGINX_CONF = "/www/server/nginx/conf/nginx.conf"
-    logger.info(f"检测到宝塔环境，设置Nginx路径为: {NGINX_PATH}")
-    logger.info(f"Nginx可执行文件路径: {NGINX_BIN}")
-    logger.info(f"Nginx配置文件路径: {NGINX_CONF}")
-else:
-    NGINX_PATH = "/etc/nginx"
-    NGINX_BIN = "/usr/sbin/nginx"
-    NGINX_CONF = "/etc/nginx/nginx.conf"
-    logger.info(f"标准环境，设置Nginx路径为: {NGINX_PATH}")
+# 标准环境相关路径
+STD_NGINX_PATH = "/etc/nginx"
+STD_NGINX_BIN = "/usr/sbin/nginx"
+STD_NGINX_CONF = "/etc/nginx/nginx.conf"
+STD_MODSEC_DIR = "/etc/nginx/modsecurity"
+STD_CRS_DIR = "/etc/nginx/modsecurity-crs"
+STD_MODULES_DIR = "/etc/nginx/modules"
 
-# 信号处理函数，确保在脚本被中断时清理临时文件
-def cleanup_handler(signum, frame):
-    """在收到信号时清理临时文件"""
-    logger.info(f"接收到信号 {signum}，正在清理临时文件...")
-    if os.path.exists(BUILD_DIR):
-        shutil.rmtree(BUILD_DIR)
-    logger.info("清理完成，退出")
-    sys.exit(1)
+# 源码库URL配置
+REPO_URLS = {
+    "modsecurity": {
+        "primary": "https://gitee.com/supine-win/ModSecurity.git",
+        "secondary": "https://gitee.com/mirrors/ModSecurity.git",
+        "fallback": "https://github.com/SpiderLabs/ModSecurity.git"
+    },
+    "modsecurity-nginx": {
+        "primary": "https://gitee.com/supine-win/ModSecurity-nginx.git",
+        "secondary": "https://gitee.com/mirrors/ModSecurity-nginx.git",
+        "fallback": "https://github.com/SpiderLabs/ModSecurity-nginx.git"
+    },
+    "coreruleset": {
+        "primary": "https://gitee.com/supine-win/coreruleset.git",
+        "secondary": "https://gitee.com/mirrors/owasp-modsecurity-crs.git",
+        "fallback": "https://github.com/coreruleset/coreruleset.git"
+    }
+}
 
-# 注册信号处理函数
-signal.signal(signal.SIGINT, cleanup_handler)  # Ctrl+C
-signal.signal(signal.SIGTERM, cleanup_handler) # 终止信号
+# PCRE库下载URLs
+PCRE_URLS = [
+    "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz",
+    "https://ftp.exim.org/pub/pcre/pcre-8.45.tar.gz",
+    "https://ftp.pcre.org/pub/pcre/pcre-8.45.tar.gz"
+]
 
-# 检测系统类型
+# 系统依赖包
+RHEL_DEPENDENCIES = [
+    "git", "gcc", "gcc-c++", "make", "automake", "autoconf", "libtool", 
+    "pcre-devel", "libxml2-devel", "curl-devel", "openssl-devel", 
+    "yajl-devel", "libmaxminddb-devel", "lua-devel",
+    "zlib-devel", "gd-devel", "perl-devel", "perl-ExtUtils-Embed",
+    "kernel-devel", "cmake", 
+    "GeoIP", "GeoIP-devel"
+]
+
+DEBIAN_DEPENDENCIES = [
+    "git", "build-essential", "automake", "autoconf", "libtool", 
+    "libpcre3-dev", "libxml2-dev", "libcurl4-openssl-dev", "libssl-dev", 
+    "libyajl-dev", "libmaxminddb-dev", "liblua5.3-dev",
+    "zlib1g-dev", "gcc", "g++", "make", "cmake", "pkg-config",
+    "libgeoip-dev", "libgeoip1"
+]
+
+DEBIAN_CRITICAL_DEPS = ["build-essential", "libpcre3-dev", "libxml2-dev", "libcurl4-openssl-dev"]
+
+# 错误消息模板
+ERROR_MESSAGES = {
+    "not_root": "此脚本需要以root权限运行",
+    "download_fail": "下载失败，请检查网络连接",
+    "compile_fail": "编译失败，请检查系统环境和依赖",
+    "nginx_binary_incompatible": "模块与当前Nginx版本不兼容"
+}
+
+#############################################################
+# 日志配置
+#############################################################
+
+def setup_logging(log_file=DEFAULT_LOG_FILE, verbose=False):
+    """配置日志系统
+    
+    Args:
+        log_file (str): 日志文件路径
+        verbose (bool): 是否启用详细日志
+    
+    Returns:
+        logging.Logger: 配置好的日志器
+    """
+    # 创建日志器
+    logger = logging.getLogger('ModSecurity')
+    
+    # 设置日志级别
+    log_level = logging.DEBUG if verbose else logging.INFO
+    logger.setLevel(log_level)
+    
+    # 创建控制台处理器
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+    
+    # 创建文件处理器
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.DEBUG)  # 文件始终记录所有详细日志
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    
+    # 添加处理器到日志器
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    
+    return logger
+
+# 创建全局日志器
+logger = setup_logging()
+
+#############################################################
+# 环境检测与信息收集
+#############################################################
+
+def is_bt_environment():
+    """检测是否为宝塔环境
+    
+    Returns:
+        bool: 是否为宝塔环境
+    """
+    return any(os.path.exists(path) for path in BT_PANEL_PATHS)
+
 def get_distro_family():
-    """检测当前系统类型"""
+    """检测当前系统类型
+    
+    Returns:
+        str: 系统类型，'rhel'(CentOS/RHEL)、'debian'(Debian/Ubuntu)或'unknown'
+    """
     if os.path.exists('/etc/redhat-release') or os.path.exists('/etc/centos-release'):
         return 'rhel'
     elif os.path.exists('/etc/debian_version'):
@@ -72,7 +169,6 @@ def get_distro_family():
     else:
         return 'unknown'
 
-# 获取Nginx版本和编译信息的函数
 def get_nginx_info(bt_env=False):
     """获取Nginx版本和编译信息
     
@@ -83,11 +179,9 @@ def get_nginx_info(bt_env=False):
         tuple: (nginx_version, configure_args, nginx_binary)
     """
     try:
-        nginx_bin = "nginx"
-        if bt_env:
-            # 宝塔环境中Nginx可能在特定位置
-            if os.path.exists("/www/server/nginx/sbin/nginx"):
-                nginx_bin = "/www/server/nginx/sbin/nginx"
+        nginx_bin = BT_NGINX_BIN if bt_env else "nginx"
+        if bt_env and os.path.exists(BT_NGINX_BIN):
+            nginx_bin = BT_NGINX_BIN
         
         # 获取Nginx版本
         nginx_version_output = subprocess.check_output(f"{nginx_bin} -v", shell=True, stderr=subprocess.STDOUT).decode()
@@ -115,27 +209,22 @@ def get_nginx_info(bt_env=False):
     except Exception as e:
         logger.error(f"获取Nginx信息时出错: {e}")
         return None, None, "nginx"
-        
-# 检测系统类型并缓存
-DISTRO_FAMILY = get_distro_family()
-logger.info(f"检测到系统类型: {DISTRO_FAMILY}")
 
-# 检查GCC版本是否支持C++17
 def check_gcc_version():
-    """检查GCC版本是否支持C++17，如果不支持则尝试安装更高版本"""
+    """检查GCC版本是否支持C++17
+    
+    Returns:
+        bool: 是否支持C++17
+    """
     try:
-        # 检查当前GCC版本
         gcc_version_output = subprocess.check_output("gcc --version", shell=True, stderr=subprocess.STDOUT, universal_newlines=True)
-        # 提取版本号
         version_match = re.search(r'\s(\d+\.\d+\.\d+)', gcc_version_output)
         if version_match:
             gcc_version = version_match.group(1)
             logger.info(f"检测到GCC版本: {gcc_version}")
             
-            # 转换为数字进行比较
             major_version = int(gcc_version.split('.')[0])
             
-            # GCC 7及以上版本支持C++17
             if major_version >= 7:
                 logger.info("当前GCC版本支持C++17")
                 return True
@@ -149,9 +238,46 @@ def check_gcc_version():
         logger.warning("系统上可能未安装GCC")
         return False
 
-# 安装支持C++17的GCC版本
+#############################################################
+# 信号处理与清理
+#############################################################
+
+def cleanup_handler(signum, frame, build_dir=DEFAULT_BUILD_DIR):
+    """在收到信号时清理临时文件
+    
+    Args:
+        signum: 信号编号
+        frame: 栈帧
+        build_dir (str): 构建目录路径
+    """
+    logger.info(f"接收到信号 {signum}，正在清理临时文件...")
+    if os.path.exists(build_dir):
+        shutil.rmtree(build_dir)
+    logger.info("清理完成，退出")
+    sys.exit(1)
+
+def setup_signal_handlers(build_dir=DEFAULT_BUILD_DIR):
+    """设置信号处理函数
+    
+    Args:
+        build_dir (str): 构建目录路径
+    """
+    signal.signal(signal.SIGINT, lambda s, f: cleanup_handler(s, f, build_dir))  # Ctrl+C
+    signal.signal(signal.SIGTERM, lambda s, f: cleanup_handler(s, f, build_dir)) # 终止信号
+
+#############################################################
+# GCC和编译工具安装
+#############################################################
+
 def install_newer_gcc(distro_family):
-    """尝试安装支持C++17的更高版本GCC"""
+    """安装支持C++17的更高版本GCC
+    
+    Args:
+        distro_family (str): 系统类型
+    
+    Returns:
+        bool: 是否成功安装
+    """
     logger.info("尝试安装支持C++17的GCC版本...")
     
     try:
@@ -192,13 +318,18 @@ def install_newer_gcc(distro_family):
         logger.error(f"安装更新版本GCC失败: {e}")
         return False
 
+#############################################################
+# 镜像源和仓库管理
+#############################################################
+
 def install_epel_repo():
     """安装EPEL仓库以提供额外的依赖包
     
     Returns:
         bool: 是否成功安装EPEL仓库
     """
-    if DISTRO_FAMILY != 'rhel':
+    distro_family = get_distro_family()
+    if distro_family != 'rhel':
         logger.info("非CentOS/RHEL系统，跳过EPEL仓库安装")
         return True
     
@@ -280,7 +411,184 @@ def install_epel_repo():
         except subprocess.CalledProcessError as e:
             logger.error(f"EPEL仓库安装失败: {e}")
             return False
+#############################################################
+# 仓库管理功能
+#############################################################
 
+def init_repos_cache(repos_cache=DEFAULT_REPOS_CACHE):
+    """初始化代码仓库缓存目录
+    
+    Args:
+        repos_cache (str): 仓库缓存的根目录
+        
+    Returns:
+        bool: 是否成功初始化
+    """
+    if not os.path.exists(repos_cache):
+        try:
+            os.makedirs(repos_cache, exist_ok=True)
+            for repo_name in REPO_URLS.keys():
+                os.makedirs(os.path.join(repos_cache, repo_name), exist_ok=True)
+            logger.info(f"创建仓库缓存目录: {repos_cache}")
+            return True
+        except Exception as e:
+            logger.error(f"创建仓库缓存目录失败: {e}")
+            return False
+    return True
+
+def clone_or_update_repo(repo_name, destination, force_update=False, repos_cache=DEFAULT_REPOS_CACHE):
+    """克隆或更新代码仓库，优先使用缓存
+    
+    Args:
+        repo_name (str): 仓库名称，必须是REPO_URLS中定义的键
+        destination (str): 目标目录
+        force_update (bool): 是否强制更新，即使缓存存在
+        repos_cache (str): 仓库缓存根目录
+        
+    Returns:
+        bool: 是否成功
+    """
+    if repo_name not in REPO_URLS:
+        logger.error(f"未定义的仓库名称: {repo_name}")
+        return False
+        
+    # 检查是否已存在目标目录
+    if os.path.exists(destination) and not force_update:
+        logger.info(f"目标目录 {destination} 已存在且不是强制更新模式，跳过克隆")
+        return True
+        
+    # 确保缓存目录存在
+    cache_dir = os.path.join(repos_cache, repo_name)
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir, exist_ok=True)
+    
+    # 检查缓存是否已存在，且非强制更新模式
+    if os.path.exists(cache_dir) and os.listdir(cache_dir) and not force_update:
+        logger.info(f"使用缓存的 {repo_name} 仓库...")
+        try:
+            # 复制缓存到目标目录
+            if os.path.exists(destination):
+                shutil.rmtree(destination)
+            shutil.copytree(cache_dir, destination)
+            logger.info(f"从缓存复制 {repo_name} 到 {destination} 成功")
+            return True
+        except Exception as e:
+            logger.error(f"从缓存复制 {repo_name} 失败: {e}")
+            # 如果复制失败，尝试直接克隆
+            
+    # 如果没有缓存或强制更新，尝试从远程克隆
+    logger.info(f"从远程克隆 {repo_name} 仓库...")
+    return download_repo_with_fallback(repo_name, destination, cache_dir, force_update)
+
+def download_repo_with_fallback(repo_name, destination, cache_dir, force_update=False):
+    """使用多级下载源尝试下载代码仓库
+    
+    Args:
+        repo_name (str): 仓库名称，必须是REPO_URLS中定义的键
+        destination (str): 目标目录
+        cache_dir (str): 缓存目录
+        force_update (bool): 是否强制更新
+        
+    Returns:
+        bool: 是否成功下载
+    """
+    urls = REPO_URLS.get(repo_name, {})
+    if not urls:
+        logger.error(f"未找到 {repo_name} 的URL配置")
+        return False
+        
+    # 定义尝试顺序
+    sources = ["primary", "secondary", "fallback"]
+    
+    # 清理目标目录（如果存在且强制更新）
+    if os.path.exists(destination) and force_update:
+        shutil.rmtree(destination)
+        
+    # 尝试按顺序从不同源下载
+    for source in sources:
+        url = urls.get(source)
+        if not url:
+            continue
+            
+        try:
+            logger.info(f"尝试从 {source} 源下载 {repo_name}...")
+            clone_cmd = f"git clone {url} {destination}"
+            subprocess.run(clone_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            logger.info(f"从 {source} 源下载 {repo_name} 成功")
+            
+            # 如果下载成功，更新缓存
+            if os.path.exists(destination):
+                update_repo_cache(destination, cache_dir)
+                
+            return True
+        except subprocess.CalledProcessError:
+            logger.warning(f"从 {source} 源下载 {repo_name} 失败")
+            
+    logger.error(f"所有源下载 {repo_name} 均失败")
+    return False
+
+def update_repo_cache(source_dir, cache_dir):
+    """更新仓库缓存
+    
+    Args:
+        source_dir (str): 源目录
+        cache_dir (str): 缓存目录
+        
+    Returns:
+        bool: 是否成功更新缓存
+    """
+    try:
+        if os.path.exists(cache_dir):
+            shutil.rmtree(cache_dir)
+        shutil.copytree(source_dir, cache_dir)
+        logger.info(f"更新缓存 {cache_dir} 成功")
+        return True
+    except Exception as e:
+        logger.error(f"更新缓存失败: {e}")
+        return False
+
+def download_file_with_fallback(urls, destination):
+    """使用多个备选URL下载文件
+    
+    Args:
+        urls (list): URL列表
+        destination (str): 目标文件路径
+        
+    Returns:
+        bool: 是否成功下载
+    """
+    for url in urls:
+        try:
+            logger.info(f"尝试从 {url} 下载文件...")
+            
+            # 检测系统中可用的下载工具
+            if shutil.which("wget"):
+                cmd = f"wget -q {url} -O {destination}"
+            elif shutil.which("curl"):
+                cmd = f"curl -s -L {url} -o {destination}"
+            else:
+                logger.error("系统中未找到wget或curl下载工具")
+                return False
+                
+            subprocess.run(cmd, shell=True, check=True)
+            
+            # 验证下载是否成功（文件存在且大小合理）
+            if os.path.exists(destination) and os.path.getsize(destination) > 1024:  # 至少1KB
+                logger.info(f"从 {url} 下载文件成功")
+                return True
+            else:
+                logger.warning(f"下载的文件 {destination} 大小异常")
+                if os.path.exists(destination):
+                    os.remove(destination)
+        except subprocess.CalledProcessError:
+            logger.warning(f"从 {url} 下载文件失败")
+            
+    logger.error("所有URL下载均失败")
+    return False
+
+#############################################################
+# CentOS镜像源修复功能
+#############################################################
 
 def fix_centos_yum_mirrors():
     """修复CentOS的YUM镜像源问题
@@ -290,13 +598,43 @@ def fix_centos_yum_mirrors():
     Returns:
         bool: 是否成功修复镜像源
     """
-    if DISTRO_FAMILY != 'rhel':
+    distro_family = get_distro_family()
+    if distro_family != 'rhel':
         logger.info("非CentOS/RHEL系统，跳过YUM镜像源修复")
         return True
     
     logger.info("开始修复CentOS YUM镜像源...")
     
     # 检测CentOS版本
+    centos_version = get_centos_version()
+    
+    # 禁用fastmirror插件
+    disable_fastmirror()
+    
+    # 备份现有YUM源配置
+    backup_repo_files()
+    
+    # 创建新的镜像源配置
+    if is_centos_eol(centos_version):
+        # 针对EOL版本使用特殊配置
+        if create_eol_mirror_config(centos_version):
+            return True
+    else:
+        # 针对非EOL版本使用标准配置
+        if create_standard_mirror_config(centos_version):
+            return True
+    
+    # 如果上述方法都失败，尝试恢复原始配置
+    restore_original_repo_files()
+    logger.error("无法配置可用的YUM源，请手动配置软件源后重试")
+    return False
+
+def get_centos_version():
+    """获取CentOS版本号
+    
+    Returns:
+        str: CentOS版本号，如"7"或"8"，默认为"7"
+    """
     centos_version = "7"  # 默认值
     try:
         if os.path.exists("/etc/centos-release"):
@@ -309,154 +647,204 @@ def fix_centos_yum_mirrors():
     except Exception as e:
         logger.warning(f"检测系统版本失败，将使用默认版本 {centos_version}: {e}")
     
-    # 检查并禁用fastmirror插件
-    fastmirror_conf = "/etc/yum/pluginconf.d/fastestmirror.conf"
-    if os.path.exists(fastmirror_conf):
-        logger.info("检测到fastmirror插件，尝试禁用...")
-        try:
-            # 备份原配置
-            backup_file = f"{fastmirror_conf}.bak"
-            if not os.path.exists(backup_file):
-                shutil.copy2(fastmirror_conf, backup_file)
-            
-            # 读取并修改配置
-            with open(fastmirror_conf, 'r') as f:
-                content = f.read()
-            
-            # 替换enabled=1为enabled=0
-            content = re.sub(r'enabled\s*=\s*1', 'enabled=0', content)
-            
-            # 写回配置
-            with open(fastmirror_conf, 'w') as f:
-                f.write(content)
-                
-            logger.info("已成功禁用fastmirror插件")
-        except Exception as e:
-            logger.warning(f"禁用fastmirror插件失败: {e}")
+    return centos_version
+
+def disable_fastmirror():
+    """禁用fastmirror插件以提高稳定性
     
-    # 备份现有YUM源配置
+    Returns:
+        bool: 是否成功禁用
+    """
+    fastmirror_conf = "/etc/yum/pluginconf.d/fastestmirror.conf"
+    if not os.path.exists(fastmirror_conf):
+        return True
+        
+    logger.info("检测到fastmirror插件，尝试禁用...")
+    try:
+        # 备份原配置
+        backup_file = f"{fastmirror_conf}.bak"
+        if not os.path.exists(backup_file):
+            shutil.copy2(fastmirror_conf, backup_file)
+        
+        # 读取并修改配置
+        with open(fastmirror_conf, 'r') as f:
+            content = f.read()
+        
+        # 替换enabled=1为enabled=0
+        content = re.sub(r'enabled\s*=\s*1', 'enabled=0', content)
+        
+        # 写回配置
+        with open(fastmirror_conf, 'w') as f:
+            f.write(content)
+            
+        logger.info("已成功禁用fastmirror插件")
+        return True
+    except Exception as e:
+        logger.warning(f"禁用fastmirror插件失败: {e}")
+        return False
+
+def backup_repo_files():
+    """备份所有YUM仓库配置文件
+    
+    Returns:
+        bool: 是否成功备份
+    """
     backup_dir = "/etc/yum.repos.d/original_backup"
     os.makedirs(backup_dir, exist_ok=True)
     
     # 备份所有.repo文件
     repo_files = glob.glob("/etc/yum.repos.d/*.repo")
-    if repo_files:
-        for repo_file in repo_files:
-            backup_file = os.path.join(backup_dir, os.path.basename(repo_file))
-            if not os.path.exists(backup_file):
-                logger.info(f"备份仓库文件 {repo_file} 到 {backup_file}")
-                shutil.copy2(repo_file, backup_file)
-            
-            # 暂时禁用原始文件
-            disabled_file = f"{repo_file}.disabled"
-            if not os.path.exists(disabled_file):
-                os.rename(repo_file, disabled_file)
-    
-    # 创建阿里云镜像源配置
-    is_centos_eol = centos_version in ["7", "8"]
-    
-    if is_centos_eol:
-        logger.info(f"检测到CentOS {centos_version} EOL版本，使用vault归档镜像")
-        
-        # 针对CentOS 7
-        if centos_version == "7":
-            mirror_conf = f"""# CentOS {centos_version} - 阿里云镜像
-[base]
-name=CentOS-{centos_version} - Base
-baseurl=https://mirrors.aliyun.com/centos-vault/7.9.2009/os/$basearch/
-gpgcheck=0
-enabled=1
-
-[updates]
-name=CentOS-{centos_version} - Updates
-baseurl=https://mirrors.aliyun.com/centos-vault/7.9.2009/updates/$basearch/
-gpgcheck=0
-enabled=1
-
-[extras]
-name=CentOS-{centos_version} - Extras
-baseurl=https://mirrors.aliyun.com/centos-vault/7.9.2009/extras/$basearch/
-gpgcheck=0
-enabled=1
-
-# EPEL仓库
-[epel]
-name=Extra Packages for Enterprise Linux {centos_version}
-baseurl=https://mirrors.aliyun.com/epel/{centos_version}/$basearch
-enabled=1
-gpgcheck=0
-"""
-        # 针对CentOS 8
-        elif centos_version == "8":
-            mirror_conf = f"""# CentOS {centos_version} - 阿里云镜像
-[base]
-name=CentOS-{centos_version} - Base
-baseurl=https://mirrors.aliyun.com/centos-vault/8.5.2111/BaseOS/$basearch/os/
-gpgcheck=0
-enabled=1
-
-[appstream]
-name=CentOS-{centos_version} - AppStream
-baseurl=https://mirrors.aliyun.com/centos-vault/8.5.2111/AppStream/$basearch/os/
-gpgcheck=0
-enabled=1
-
-[extras]
-name=CentOS-{centos_version} - Extras
-baseurl=https://mirrors.aliyun.com/centos-vault/8.5.2111/extras/$basearch/os/
-gpgcheck=0
-enabled=1
-
-# EPEL仓库
-[epel]
-name=Extra Packages for Enterprise Linux {centos_version}
-baseurl=https://mirrors.aliyun.com/epel/{centos_version}/Everything/$basearch
-enabled=1
-gpgcheck=0
-"""
-        else:
-            # 一般情况下不会到这里
-            mirror_conf = ""
-    else:
-        # 非EOL版本使用标准镜像
-        mirror_conf = f"""# CentOS {centos_version} - 阿里云镜像
-[base]
-name=CentOS-{centos_version} - Base
-baseurl=https://mirrors.aliyun.com/centos/{centos_version}/BaseOS/$basearch/os/
-gpgcheck=0
-enabled=1
-
-[appstream]
-name=CentOS-{centos_version} - AppStream
-baseurl=https://mirrors.aliyun.com/centos/{centos_version}/AppStream/$basearch/os/
-gpgcheck=0
-enabled=1
-
-[extras]
-name=CentOS-{centos_version} - Extras
-baseurl=https://mirrors.aliyun.com/centos/{centos_version}/extras/$basearch/os/
-gpgcheck=0
-enabled=1
-
-# EPEL仓库
-[epel]
-name=Extra Packages for Enterprise Linux {centos_version}
-baseurl=https://mirrors.aliyun.com/epel/{centos_version}/Everything/$basearch
-enabled=1
-gpgcheck=0
-"""
-    
-    # 写入阿里云镜像配置
-    try:
-        mirror_file = "/etc/yum.repos.d/aliyun-mirror.repo"
-        with open(mirror_file, 'w') as f:
-            f.write(mirror_conf)
-        logger.info("成功创建阿里云镜像源配置")
-    except Exception as e:
-        logger.error(f"创建镜像源配置失败: {e}")
+    if not repo_files:
+        logger.warning("未找到YUM仓库配置文件")
         return False
+        
+    for repo_file in repo_files:
+        backup_file = os.path.join(backup_dir, os.path.basename(repo_file))
+        if not os.path.exists(backup_file):
+            logger.info(f"备份仓库文件 {repo_file} 到 {backup_file}")
+            shutil.copy2(repo_file, backup_file)
+        
+        # 暂时禁用原始文件
+        disabled_file = f"{repo_file}.disabled"
+        if not os.path.exists(disabled_file):
+            os.rename(repo_file, disabled_file)
     
-    # 清理缓存并测试
+    logger.info("已备份所有YUM仓库配置文件")
+    return True
+
+def restore_original_repo_files():
+    """恢复原始YUM仓库配置文件
+    
+    Returns:
+        bool: 是否成功恢复
+    """
+    for disabled_file in glob.glob("/etc/yum.repos.d/*.disabled"):
+        original_file = disabled_file.replace(".disabled", "")
+        try:
+            logger.info(f"恢复原始配置文件: {original_file}")
+            os.rename(disabled_file, original_file)
+        except Exception as e:
+            logger.warning(f"恢复配置文件失败: {e}")
+    
+    logger.info("已尝试恢复所有原始YUM仓库配置文件")
+    return True
+
+def is_centos_eol(version):
+    """检查CentOS版本是否已经EOL(End Of Life)
+    
+    Args:
+        version (str): CentOS版本号
+        
+    Returns:
+        bool: 是否为EOL版本
+    """
+    return version in ["7", "8"]
+
+def create_eol_mirror_config(centos_version):
+    """为EOL版本的CentOS创建镜像源配置
+    
+    Args:
+        centos_version (str): CentOS版本号
+        
+    Returns:
+        bool: 是否成功创建配置
+    """
+    logger.info(f"检测到CentOS {centos_version} EOL版本，使用vault归档镜像")
+    
+    # 不同版本的CentOS使用不同的vault版本
+    vault_version = "7.9.2009" if centos_version == "7" else "8.5.2111"
+    
+    # 尝试使用阿里云镜像
+    mirror_config = generate_aliyun_eol_config(centos_version, vault_version)
+    
+    mirror_file = "/etc/yum.repos.d/aliyun-mirror.repo"
+    try:
+        with open(mirror_file, 'w') as f:
+            f.write(mirror_config)
+        logger.info("成功创建阿里云镜像源配置")
+        
+        # 测试镜像源是否可用
+        if test_yum_repo():
+            return True
+    except Exception as e:
+        logger.error(f"创建阿里云镜像源配置失败: {e}")
+    
+    # 如果阿里云镜像失败，尝试清华镜像
+    try:
+        # 删除阿里云配置
+        if os.path.exists(mirror_file):
+            os.remove(mirror_file)
+        
+        # 创建清华源配置
+        tsinghua_config = generate_tsinghua_eol_config(centos_version, vault_version)
+        tsinghua_file = "/etc/yum.repos.d/tsinghua-mirror.repo"
+        
+        with open(tsinghua_file, 'w') as f:
+            f.write(tsinghua_config)
+        logger.info("成功创建清华镜像源配置")
+        
+        # 测试镜像源是否可用
+        if test_yum_repo():
+            return True
+    except Exception as e:
+        logger.error(f"创建清华镜像源配置失败: {e}")
+    
+    return False
+
+def create_standard_mirror_config(centos_version):
+    """为非EOL版本的CentOS创建标准镜像源配置
+    
+    Args:
+        centos_version (str): CentOS版本号
+        
+    Returns:
+        bool: 是否成功创建配置
+    """
+    logger.info(f"为CentOS {centos_version} 创建标准镜像源配置")
+    
+    # 尝试使用阿里云镜像
+    mirror_config = generate_aliyun_standard_config(centos_version)
+    
+    mirror_file = "/etc/yum.repos.d/aliyun-mirror.repo"
+    try:
+        with open(mirror_file, 'w') as f:
+            f.write(mirror_config)
+        logger.info("成功创建阿里云镜像源配置")
+        
+        # 测试镜像源是否可用
+        if test_yum_repo():
+            return True
+    except Exception as e:
+        logger.error(f"创建阿里云镜像源配置失败: {e}")
+    
+    # 如果阿里云镜像失败，尝试清华镜像
+    try:
+        # 删除阿里云配置
+        if os.path.exists(mirror_file):
+            os.remove(mirror_file)
+        
+        # 创建清华源配置
+        tsinghua_config = generate_tsinghua_standard_config(centos_version)
+        tsinghua_file = "/etc/yum.repos.d/tsinghua-mirror.repo"
+        
+        with open(tsinghua_file, 'w') as f:
+            f.write(tsinghua_config)
+        logger.info("成功创建清华镜像源配置")
+        
+        # 测试镜像源是否可用
+        if test_yum_repo():
+            return True
+    except Exception as e:
+        logger.error(f"创建清华镜像源配置失败: {e}")
+    
+    return False
+
+def test_yum_repo():
+    """测试YUM仓库是否可用
+    
+    Returns:
+        bool: 是否可用
+    """
     try:
         logger.info("清理YUM缓存并刷新...")
         subprocess.run("yum clean all", shell=True, check=True)
@@ -469,1291 +857,1237 @@ gpgcheck=0
         logger.info("YUM镜像源配置成功，仓库可访问")
         return True
     except subprocess.CalledProcessError as e:
-        logger.error(f"镜像源测试失败，尝试使用清华源: {e}")
+        logger.error(f"镜像源测试失败: {e}")
+        return False
+
+def generate_aliyun_eol_config(version, vault_version):
+    """生成阿里云EOL版本配置
+    
+    Args:
+        version (str): CentOS版本号
+        vault_version (str): vault归档版本号
         
-        # 尝试使用清华源
-        try:
-            # 删除阿里云配置
-            if os.path.exists(mirror_file):
-                os.remove(mirror_file)
-            
-            # 创建清华源配置
-            if centos_version == "7":
-                tsinghua_conf = f"""# CentOS {centos_version} - 清华镜像
+    Returns:
+        str: 配置内容
+    """
+    if version == "7":
+        return f"""# CentOS {version} - 阿里云镜像
 [base]
-name=CentOS-{centos_version} - Base
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos-vault/7.9.2009/os/$basearch/
+name=CentOS-{version} - Base
+baseurl=[https://mirrors.aliyun.com/centos-vault/{vault_version}/os/$basearch/](https://mirrors.aliyun.com/centos-vault/{vault_version}/os/$basearch/)
 gpgcheck=0
 enabled=1
 
 [updates]
-name=CentOS-{centos_version} - Updates
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos-vault/7.9.2009/updates/$basearch/
+name=CentOS-{version} - Updates
+baseurl=[https://mirrors.aliyun.com/centos-vault/{vault_version}/updates/$basearch/](https://mirrors.aliyun.com/centos-vault/{vault_version}/updates/$basearch/)
 gpgcheck=0
 enabled=1
 
 [extras]
-name=CentOS-{centos_version} - Extras
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos-vault/7.9.2009/extras/$basearch/
+name=CentOS-{version} - Extras
+baseurl=[https://mirrors.aliyun.com/centos-vault/{vault_version}/extras/$basearch/](https://mirrors.aliyun.com/centos-vault/{vault_version}/extras/$basearch/)
 gpgcheck=0
 enabled=1
 
 # EPEL仓库
 [epel]
-name=Extra Packages for Enterprise Linux {centos_version}
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/epel/{centos_version}/$basearch
+name=Extra Packages for Enterprise Linux {version}
+baseurl=[https://mirrors.aliyun.com/epel/{version}/$basearch](https://mirrors.aliyun.com/epel/{version}/$basearch)
 enabled=1
 gpgcheck=0
 """
-            elif centos_version == "8":
-                tsinghua_conf = f"""# CentOS {centos_version} - 清华镜像
+    else:  # version == "8"
+        return f"""# CentOS {version} - 阿里云镜像
 [base]
-name=CentOS-{centos_version} - Base
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos-vault/8.5.2111/BaseOS/$basearch/os/
+name=CentOS-{version} - Base
+baseurl=[https://mirrors.aliyun.com/centos-vault/{vault_version}/BaseOS/$basearch/os/](https://mirrors.aliyun.com/centos-vault/{vault_version}/BaseOS/$basearch/os/)
 gpgcheck=0
 enabled=1
 
 [appstream]
-name=CentOS-{centos_version} - AppStream
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos-vault/8.5.2111/AppStream/$basearch/os/
+name=CentOS-{version} - AppStream
+baseurl=[https://mirrors.aliyun.com/centos-vault/{vault_version}/AppStream/$basearch/os/](https://mirrors.aliyun.com/centos-vault/{vault_version}/AppStream/$basearch/os/)
 gpgcheck=0
 enabled=1
 
 [extras]
-name=CentOS-{centos_version} - Extras
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos-vault/8.5.2111/extras/$basearch/os/
+name=CentOS-{version} - Extras
+baseurl=[https://mirrors.aliyun.com/centos-vault/{vault_version}/extras/$basearch/os/](https://mirrors.aliyun.com/centos-vault/{vault_version}/extras/$basearch/os/)
 gpgcheck=0
 enabled=1
 
 # EPEL仓库
 [epel]
-name=Extra Packages for Enterprise Linux {centos_version}
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/epel/{centos_version}/Everything/$basearch
+name=Extra Packages for Enterprise Linux {version}
+baseurl=[https://mirrors.aliyun.com/epel/{version}/Everything/$basearch](https://mirrors.aliyun.com/epel/{version}/Everything/$basearch)
 enabled=1
 gpgcheck=0
 """
-            else:
-                # 非EOL版本
-                tsinghua_conf = f"""# CentOS {centos_version} - 清华镜像
+
+def generate_tsinghua_eol_config(version, vault_version):
+    """生成清华EOL版本配置
+    
+    Args:
+        version (str): CentOS版本号
+        vault_version (str): vault归档版本号
+        
+    Returns:
+        str: 配置内容
+    """
+    if version == "7":
+        return f"""# CentOS {version} - 清华镜像
 [base]
-name=CentOS-{centos_version} - Base
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos/{centos_version}/BaseOS/$basearch/os/
+name=CentOS-{version} - Base
+baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/os/$basearch/](https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/os/$basearch/)
+gpgcheck=0
+enabled=1
+
+[updates]
+name=CentOS-{version} - Updates
+baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/updates/$basearch/](https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/updates/$basearch/)
+gpgcheck=0
+enabled=1
+
+[extras]
+name=CentOS-{version} - Extras
+baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/extras/$basearch/](https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/extras/$basearch/)
+gpgcheck=0
+enabled=1
+
+# EPEL仓库
+[epel]
+name=Extra Packages for Enterprise Linux {version}
+baseurl=[https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/$basearch](https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/$basearch)
+enabled=1
+gpgcheck=0
+"""
+    else:  # version == "8"
+        return f"""# CentOS {version} - 清华镜像
+[base]
+name=CentOS-{version} - Base
+baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/BaseOS/$basearch/os/](https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/BaseOS/$basearch/os/)
 gpgcheck=0
 enabled=1
 
 [appstream]
-name=CentOS-{centos_version} - AppStream
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos/{centos_version}/AppStream/$basearch/os/
+name=CentOS-{version} - AppStream
+baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/AppStream/$basearch/os/](https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/AppStream/$basearch/os/)
 gpgcheck=0
 enabled=1
 
 [extras]
-name=CentOS-{centos_version} - Extras
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos/{centos_version}/extras/$basearch/os/
+name=CentOS-{version} - Extras
+baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/extras/$basearch/os/](https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/extras/$basearch/os/)
 gpgcheck=0
 enabled=1
 
 # EPEL仓库
 [epel]
-name=Extra Packages for Enterprise Linux {centos_version}
-baseurl=https://mirrors.tuna.tsinghua.edu.cn/epel/{centos_version}/Everything/$basearch
+name=Extra Packages for Enterprise Linux {version}
+baseurl=[https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/Everything/$basearch](https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/Everything/$basearch)
 enabled=1
 gpgcheck=0
 """
-            
-            # 写入清华源配置
-            tsinghua_file = "/etc/yum.repos.d/tsinghua-mirror.repo"
-            with open(tsinghua_file, 'w') as f:
-                f.write(tsinghua_conf)
-            
-            # 再次测试
-            logger.info("清理YUM缓存并使用清华源测试...")
-            subprocess.run("yum clean all", shell=True, check=True)
-            subprocess.run("yum makecache", shell=True, check=True)
-            subprocess.run("yum repolist", shell=True, check=True)
-            
-            logger.info("清华源配置成功，仓库可访问")
-            return True
-        except Exception as e2:
-            logger.error(f"清华源也配置失败: {e2}")
-            
-            # 恢复原始配置
-            for disabled_file in glob.glob("/etc/yum.repos.d/*.disabled"):
-                original_file = disabled_file.replace(".disabled", "")
-                try:
-                    os.rename(disabled_file, original_file)
-                except Exception:
-                    pass
-            
-            logger.error("无法配置可用的YUM源，请手动配置软件源后重试")
-            return False
 
-# 安装系统依赖
-def install_dependencies():
-    """安装ModSecurity所需的系统依赖"""
+def generate_aliyun_standard_config(version):
+    """生成阿里云标准版本配置
+    
+    Args:
+        version (str): CentOS版本号
+        
+    Returns:
+        str: 配置内容
+    """
+    return f"""# CentOS {version} - 阿里云镜像
+[base]
+name=CentOS-{version} - Base
+baseurl=[https://mirrors.aliyun.com/centos/{version}/BaseOS/$basearch/os/](https://mirrors.aliyun.com/centos/{version}/BaseOS/$basearch/os/)
+gpgcheck=0
+enabled=1
+
+[appstream]
+name=CentOS-{version} - AppStream
+baseurl=[https://mirrors.aliyun.com/centos/{version}/AppStream/$basearch/os/](https://mirrors.aliyun.com/centos/{version}/AppStream/$basearch/os/)
+gpgcheck=0
+enabled=1
+
+[extras]
+name=CentOS-{version} - Extras
+baseurl=[https://mirrors.aliyun.com/centos/{version}/extras/$basearch/os/](https://mirrors.aliyun.com/centos/{version}/extras/$basearch/os/)
+gpgcheck=0
+enabled=1
+
+# EPEL仓库
+[epel]
+name=Extra Packages for Enterprise Linux {version}
+baseurl=[https://mirrors.aliyun.com/epel/{version}/Everything/$basearch](https://mirrors.aliyun.com/epel/{version}/Everything/$basearch)
+enabled=1
+gpgcheck=0
+"""
+
+def generate_tsinghua_standard_config(version):
+    """生成清华标准版本配置
+    
+    Args:
+        version (str): CentOS版本号
+        
+    Returns:
+        str: 配置内容
+    """
+    return f"""# CentOS {version} - 清华镜像
+[base]
+name=CentOS-{version} - Base
+baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/BaseOS/$basearch/os/](https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/BaseOS/$basearch/os/)
+gpgcheck=0
+enabled=1
+
+[appstream]
+name=CentOS-{version} - AppStream
+baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/AppStream/$basearch/os/](https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/AppStream/$basearch/os/)
+gpgcheck=0
+enabled=1
+
+[extras]
+name=CentOS-{version} - Extras
+baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/extras/$basearch/os/](https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/extras/$basearch/os/)
+gpgcheck=0
+enabled=1
+
+# EPEL仓库
+[epel]
+name=Extra Packages for Enterprise Linux {version}
+baseurl=[https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/Everything/$basearch](https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/Everything/$basearch)
+enabled=1
+gpgcheck=0
+"""
+#############################################################
+# 依赖安装功能
+#############################################################
+
+def install_dependencies(skip_deps=False, bt_env=False):
+    """安装ModSecurity所需的系统依赖
+    
+    Args:
+        skip_deps (bool): 是否跳过依赖安装
+        bt_env (bool): 是否为宝塔环境
+        
+    Returns:
+        bool: 是否成功安装依赖
+    """
+    if skip_deps:
+        logger.warning("根据参数跳过依赖安装")
+        return True
+        
     logger.info("安装系统依赖...")
     
-    distro_family = DISTRO_FAMILY  # 使用全局缓存的系统类型
-    
-    # 检测是否为宝塔环境
-    if IS_BT_ENV:
-        logger.info("检测到宝塔面板环境，跳过Nginx安装")
+    distro_family = get_distro_family()
     
     # 检测是否已安装Nginx
-    nginx_installed = False
-    try:
-        # 使用新函数获取Nginx信息
-        nginx_version, _, _ = get_nginx_info(IS_BT_ENV)
-        if nginx_version:
-            nginx_installed = True
-            logger.info(f"检测到系统中已安装Nginx v{nginx_version}，跳过Nginx安装")
-    except Exception:
-        logger.info("未检测到Nginx，将进行安装")
-        nginx_installed = False
+    nginx_installed, nginx_version = check_nginx_installed(bt_env)
     
+    # 准备依赖包列表
+    dependencies = prepare_dependency_list(distro_family, nginx_installed, bt_env)
+    
+    # 安装依赖
     if distro_family == 'rhel':
-        # CentOS/RHEL系统
-        dependencies = [
-            "git", "gcc", "gcc-c++", "make", "automake", "autoconf", "libtool", 
-            "pcre-devel", "libxml2-devel", "curl-devel", "openssl-devel", 
-            "yajl-devel", "libmaxminddb-devel", "lua-devel",
-            # 添加更多必要的开发包
-            "zlib-devel", "gd-devel", "perl-devel", "perl-ExtUtils-Embed",
-            "kernel-devel", "cmake", 
-            # 添加GeoIP库的依赖，修复“the GeoIP module requires the GeoIP library”错误
-            "GeoIP", "GeoIP-devel"
-        ]
-        # 如果未安装nginx且不是宝塔环境，添加nginx依赖
-        if not nginx_installed and not IS_BT_ENV:
-            dependencies.append("nginx")
-            logger.info("将安装Nginx服务器")
-        else:
-            logger.info("跳过Nginx安装，使用现有Nginx")
-        cmd = f"yum install -y {' '.join(dependencies)}"
+        return install_rhel_dependencies(dependencies)
     elif distro_family == 'debian':
-        # Debian/Ubuntu系统
-        dependencies = [
-            "git", "build-essential", "automake", "autoconf", "libtool", 
-            "libpcre3-dev", "libxml2-dev", "libcurl4-openssl-dev", "libssl-dev", 
-            "libyajl-dev", "libmaxminddb-dev", "liblua5.3-dev",
-            # 添加更多必要的开发包，特别是Ubuntu系统需要的
-            "zlib1g-dev", "gcc", "g++", "make", "cmake", "pkg-config",
-            # 添加GeoIP库的依赖，修复“the GeoIP module requires the GeoIP library”错误
-            "libgeoip-dev", "libgeoip1"
-        ]
-        # 如果未安装nginx且不是宝塔环境，添加nginx依赖
-        if not nginx_installed and not IS_BT_ENV:
-            dependencies.append("nginx")
-            logger.info("将安装Nginx服务器")
-        else:
-            logger.info("跳过Nginx安装，使用现有Nginx")
-            
-        # 定义关键依赖包，这些是编译必须的
-        critical_deps = ["build-essential", "libpcre3-dev", "libxml2-dev", "libcurl4-openssl-dev"]
-        
-        cmd = f"apt update && apt install -y {' '.join(dependencies)}"
+        return install_debian_dependencies(dependencies)
     else:
         logger.error("不支持的系统类型")
-        sys.exit(1)
+        return False
+
+def check_nginx_installed(bt_env=False):
+    """检查系统中是否已安装Nginx
     
-    # 使用分段安装策略和更好的错误处理
+    Args:
+        bt_env (bool): 是否为宝塔环境
+        
+    Returns:
+        tuple: (是否已安装, Nginx版本)
+    """
+    try:
+        nginx_version, _, _ = get_nginx_info(bt_env)
+        if nginx_version:
+            logger.info(f"检测到系统中已安装Nginx v{nginx_version}")
+            return True, nginx_version
+    except Exception:
+        logger.info("未检测到Nginx")
+    
+    return False, None
+
+def prepare_dependency_list(distro_family, nginx_installed, bt_env=False):
+    """准备依赖包列表
+    
+    Args:
+        distro_family (str): 系统类型
+        nginx_installed (bool): 是否已安装Nginx
+        bt_env (bool): 是否为宝塔环境
+        
+    Returns:
+        list: 依赖包列表
+    """
     if distro_family == 'rhel':
-        # 首先尝试安装EPEL仓库来提供更多依赖包
-        epel_installed = install_epel_repo()
-        if epel_installed:
-            logger.info("成功添加EPEL仓库，这将提供更多依赖包")
-            subprocess.run("yum clean all && yum makecache", shell=True, check=False)
-        else:
-            logger.warning("无法安装EPEL仓库，某些依赖包可能不可用")
+        dependencies = RHEL_DEPENDENCIES.copy()
+    else:  # debian
+        dependencies = DEBIAN_DEPENDENCIES.copy()
     
-    # 分批安装依赖，以防单个包失败影响全局
-    missing_packages = []
+    # 如果未安装nginx且不是宝塔环境，添加nginx依赖
+    if not nginx_installed and not bt_env:
+        dependencies.append("nginx")
+        logger.info("将安装Nginx服务器")
+    else:
+        logger.info("跳过Nginx安装，使用现有Nginx")
     
-    try:
-        # 捕获过程的输出以进行详细错误分析
-        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr = process.communicate()
+    return dependencies
+
+def install_rhel_dependencies(dependencies):
+    """在RHEL/CentOS系统上安装依赖
+    
+    Args:
+        dependencies (list): 依赖包列表
         
+    Returns:
+        bool: 是否成功安装依赖
+    """
+    # 首先尝试安装EPEL仓库
+    epel_installed = install_epel_repo()
+    if epel_installed:
+        logger.info("成功添加EPEL仓库，这将提供更多依赖包")
+        subprocess.run("yum clean all && yum makecache", shell=True, check=False)
+    else:
+        logger.warning("无法安装EPEL仓库，某些依赖包可能不可用")
+    
+    # 构建安装命令
+    cmd = f"yum install -y {' '.join(dependencies)}"
+    
+    # 执行安装命令
+    return execute_dependency_installation(cmd, 'rhel', dependencies)
+
+def install_debian_dependencies(dependencies):
+    """在Debian/Ubuntu系统上安装依赖
+    
+    Args:
+        dependencies (list): 依赖包列表
+        
+    Returns:
+        bool: 是否成功安装依赖
+    """
+    # 构建安装命令
+    cmd = f"apt update && apt install -y {' '.join(dependencies)}"
+    
+    # 执行安装命令
+    return execute_dependency_installation(cmd, 'debian', dependencies)
+
+def execute_dependency_installation(cmd, distro_family, dependencies):
+    """执行依赖安装命令
+    
+    Args:
+        cmd (str): 安装命令
+        distro_family (str): 系统类型
+        dependencies (list): 依赖包列表
+        
+    Returns:
+        bool: 是否成功安装依赖
+    """
+    try:
+        logger.info(f"执行依赖安装命令: {cmd}")
+        process = subprocess.run(cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        
+        # 检查是否出现镜像源错误
         if process.returncode != 0:
-            logger.warning("部分依赖安装可能失败")
-            logger.debug(f"stdout: {stdout}")
-            logger.debug(f"stderr: {stderr}")
+            error_output = process.stderr
+            logger.warning(f"依赖安装失败，错误信息: {error_output}")
             
-            # 分析错误并提供更有用的提示
-            if "Could not resolve host" in stderr:
-                logger.error("检测到DNS解析问题，无法连接到软件仓库")
-                logger.error("请检查系统的网络连接或使用 --skip-deps 参数跳过依赖安装")
-                raise subprocess.CalledProcessError(process.returncode, cmd, output=stdout, stderr=stderr)
-            
-            # 检测是否有缺失的包
-            if "No package" in stderr or "nothing provides" in stderr.lower() or "E: Unable to locate package" in stderr:
-                # 提取缺失的包名称
-                missing_package_matches = re.findall(r'No package ([\w-]+) available', stderr)
-                missing_package_matches.extend(re.findall(r'nothing provides ([\w-]+) needed', stderr.lower()))
-                missing_package_matches.extend(re.findall(r'E: Unable to locate package ([\w-]+)', stderr))
+            # 检查CentOS的特殊错误
+            if distro_family == 'rhel' and ('Could not retrieve mirrorlist' in error_output or 'Cannot find a valid baseurl' in error_output):
+                logger.warning("检测到YUM镜像源错误，尝试修复...")
                 
-                for pkg in missing_package_matches:
-                    missing_packages.append(pkg)
-                    logger.warning(f"软件包 {pkg} 在当前系统的仓库中不可用")
-                
-                # 尝试一个一个安装其余的依赖包
-                logger.info("将尝试单独安装每个依赖包，已跳过不可用的包")
-                for dep in dependencies:
-                    if dep not in missing_packages:
-                        try:
-                            if distro_family == 'rhel':
-                                install_cmd = f"yum install -y {dep}"
-                            else:  # debian
-                                install_cmd = f"apt install -y {dep}"
-                            
-                            subprocess.run(install_cmd, shell=True, check=True, 
-                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            logger.info(f"成功安装依赖: {dep}")
-                        except subprocess.CalledProcessError:
-                            missing_packages.append(dep)
-                            logger.warning(f"无法安装依赖: {dep}")
-                
-                # 对于Debian/Ubuntu系统，单独再次尝试安装关键依赖
-                if distro_family == 'debian' and 'critical_deps' in locals():
-                    logger.info("尝试单独安装关键编译依赖...")
-                    for critical_dep in critical_deps:
-                        if critical_dep not in missing_packages:
-                            try:
-                                install_cmd = f"apt install -y {critical_dep}"
-                                subprocess.run(install_cmd, shell=True, check=True,
-                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                logger.info(f"成功安装关键依赖: {critical_dep}")
-                            except subprocess.CalledProcessError:
-                                missing_packages.append(critical_dep)
-                                logger.warning(f"无法安装关键依赖: {critical_dep}")
-        else:
-            logger.info("依赖安装完成")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"依赖安装过程出错: {e}")
-        # 在DNS错误等严重问题下才会执行到这里
-        raise
-    
-    # 如果有缺失的包，给出具体的解决方案
-    if missing_packages:
-        logger.warning(f"共有 {len(missing_packages)} 个依赖包无法安装: {', '.join(missing_packages)}")
-        
-        # 检查是否缺失关键依赖
-        critical_missing = False
-        if distro_family == 'debian' and 'critical_deps' in locals():
-            critical_missing = any(dep in missing_packages for dep in critical_deps)
-            if critical_missing:
-                logger.warning("安装无法成功编译ModSecurity所需的关键依赖")
-        
-        # RHEL系统特定的建议
-        if distro_family == 'rhel':
-            logger.info("对于CentOS/RHEL系统，可尝试以下方法来安装缺失的依赖:")
-            logger.info("1. 激活 PowerTools 或 CRB 仓库(如适用):")
-            logger.info("   sudo yum config-manager --set-enabled powertools")
-            logger.info("   或者: sudo yum config-manager --set-enabled crb")
-            logger.info("2. 尝试其他软件源，如 Remi's RPM 仓库或者 IUS:")
-            logger.info("   https://rpms.remirepo.net/ 或 https://ius.io/")
-            logger.info("3. 如果可能，升级系统至更新版本")
-        # Debian系统特定的建议
-        else:  
-            logger.info("对于Debian/Ubuntu系统，可尝试以下方法来安装缺失的依赖:")
-            logger.info("1. 激活额外的软件源: sudo apt-add-repository universe")
-            logger.info("2. 更新软件源列表: sudo apt update")
-            logger.info("3. 手动安装关键编译包: sudo apt install build-essential libpcre3-dev libxml2-dev libcurl4-openssl-dev")
-            
-        logger.info("脚本将继续执行，但可能会在编译过程中遇到问题")
-
-# 下载ModSecurity库
-def download_modsecurity(force_update=False):
-    """下载ModSecurity核心库
-    
-    Args:
-        force_update (bool, optional): 强制重新编译ModSecurity模块，即使已存在也会更新。默认为False。
-    """
-    logger.info("下载ModSecurity...")
-    os.chdir(BUILD_DIR)
-    
-    # 设置ModSecurity版本
-    MODSEC_VERSION = "3.0.14"
-    
-    # 优先尝试从supine-win的Gitee镜像下载源码
-    try:
-        logger.info("尝试从supine-win的Gitee镜像下载ModSecurity源码...")
-        subprocess.run("git clone https://gitee.com/supine-win/ModSecurity.git modsecurity", 
-                     shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        logger.info("从supine-win的Gitee镜像下载ModSecurity源码成功")
-        download_success = True
-    except subprocess.CalledProcessError as e:
-        logger.error(f"从supine-win的镜像下载ModSecurity源码失败: {e}")
-        logger.warning("从supine-win的镜像下载失败，尝试官方Gitee镜像")
-        download_success = False
-    
-    # 如果上一步失败，尝试官方Gitee镜像
-    if not download_success:
-        try:
-            logger.info("尝试从Gitee官方镜像下载ModSecurity源码...")
-            subprocess.run("git clone https://gitee.com/mirrors/ModSecurity.git modsecurity", 
-                         shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            logger.info("从Gitee官方镜像下载ModSecurity源码成功")
-            download_success = True
-        except subprocess.CalledProcessError:
-            logger.warning("从Gitee镜像下载失败，尝试从GitHub下载")
-            download_success = False
-    
-    # 如果上一步失败，作为最后尝试从GitHub下载源码
-    if not download_success:
-        try:
-            logger.info("尝试从GitHub下载ModSecurity源码...")
-            subprocess.run("git clone https://github.com/SpiderLabs/ModSecurity.git modsecurity", 
-                         shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            logger.info("从GitHub下载ModSecurity源码成功")
-            download_success = True
-        except subprocess.CalledProcessError:
-            logger.error("无法下载ModSecurity源码，请检查网络连接")
-            sys.exit(1)
-    
-    # 检查模块文件是否已存在
-    modules_dir = os.path.join(NGINX_PATH, "modules")
-    module_file = os.path.join(modules_dir, "ngx_http_modsecurity_module.so")
-    module_exists = os.path.exists(module_file)
-
-    # 编译并安装ModSecurity
-    try:
-        os.chdir(os.path.join(BUILD_DIR, "modsecurity"))
-        
-        # 初始化子模块
-        logger.info("初始化子模块...")
-        print("+++ 执行: git submodule init +++")
-        subprocess.run("git submodule init", shell=True, check=True)
-        print("+++ 执行: git submodule update +++")
-        subprocess.run("git submodule update", shell=True, check=True)
-        
-        # 如果模块已存在且不是强制更新，跳过编译步骤
-        if module_exists and not force_update:
-            logger.info(f"检测到ModSecurity模块已存在: {module_file}")
-            logger.info("跳过ModSecurity的编译和安装步骤")
-            return
-        
-        # 如果强制更新模式且模块存在
-        if module_exists and force_update:
-            logger.info(f"强制更新模式: 将重新编译ModSecurity模块")
-        
-        # 检查GCC版本是否支持C++17
-        gcc_supports_cpp17 = check_gcc_version()
-        if not gcc_supports_cpp17:
-            logger.warning("ModSecurity编译需要支持C++17的GCC 7或更高版本")
-            gcc_upgraded = install_newer_gcc(DISTRO_FAMILY)
-            if gcc_upgraded:
-                logger.info("成功安装支持C++17的GCC版本")
-            else:
-                logger.error("无法安装支持C++17的GCC版本，编译可能会失败")
-                logger.error("您可能需要手动安装GCC 7+或尝试使用预编译的ModSecurity模块")
-                logger.info("尝试继续编译，但可能会失败...")
-            
-        # 构建和编译
-        logger.info("开始编译ModSecurity...")
-        print("+++ 执行: ./build.sh +++")
-        subprocess.run("./build.sh", shell=True, check=True)
-        print("+++ 执行: ./configure +++")
-        subprocess.run("./configure", shell=True, check=True)
-        print("+++ 执行: make +++")
-        subprocess.run("make", shell=True, check=True)
-        print("+++ 执行: make install +++")
-        subprocess.run("make install", shell=True, check=True)
-        
-        logger.info("ModSecurity编译安装完成")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"ModSecurity编译安装失败: {e}")
-        sys.exit(1)
-    
-
-
-# 下载和安装ModSecurity-nginx连接器
-def install_modsecurity_nginx(force_update=False):
-    """下载和安装ModSecurity-nginx连接器
-    
-    Args:
-        force_update (bool, optional): 强制重新编译ModSecurity模块，即使已存在也会更新。默认为False。
-    """
-    logger.info("下载ModSecurity-nginx连接器...")
-    
-    # 检查模块文件是否已存在
-    modules_dir = os.path.join(NGINX_PATH, "modules")
-    module_file = os.path.join(modules_dir, "ngx_http_modsecurity_module.so")
-    if os.path.exists(module_file) and not force_update:
-        logger.info(f"检测到ModSecurity模块已存在: {module_file}")
-        logger.info("跳过ModSecurity-nginx模块编译和安装")
-        return
-        
-    # 如果强制更新模式且模块存在
-    if os.path.exists(module_file) and force_update:
-        logger.info(f"强制更新模式: 将重新编译ModSecurity-nginx模块")
-        # 移除现有模块文件以确保更新
-        try:
-            os.remove(module_file)
-            logger.info(f"已移除现有模块文件: {module_file}")
-        except Exception as e:
-            logger.warning(f"无法移除现有模块文件: {e}")
-        
-    os.chdir(BUILD_DIR)
-
-    # 优先尝试从supine-win的Gitee镜像下载源码
-    download_success = False
-    try:
-        logger.info("尝试从supine-win的Gitee镜像下载ModSecurity-nginx源码...")
-        subprocess.run("git clone https://gitee.com/supine-win/ModSecurity-nginx.git modsecurity-nginx", 
-                     shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        logger.info("从supine-win的Gitee镜像下载ModSecurity-nginx成功")
-        download_success = True
-    except subprocess.CalledProcessError:
-        logger.warning("从supine-win的镜像下载失败，尝试官方Gitee镜像")
-    
-    # 如果上一步失败，尝试官方Gitee镜像
-    if not download_success:
-        try:
-            logger.info("尝试从Gitee官方镜像下载ModSecurity-nginx源码...")
-            subprocess.run("git clone https://gitee.com/mirrors/ModSecurity-nginx.git modsecurity-nginx", 
-                         shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            logger.info("从Gitee官方镜像下载ModSecurity-nginx源码成功")
-            download_success = True
-        except subprocess.CalledProcessError:
-            logger.warning("从Gitee镜像下载失败，尝试从GitHub下载")
-    
-    # 如果上一步失败，作为最后尝试从GitHub下载源码
-    if not download_success:
-        try:
-            logger.info("尝试从GitHub下载ModSecurity-nginx源码...")
-            subprocess.run("git clone https://github.com/SpiderLabs/ModSecurity-nginx.git modsecurity-nginx", 
-                         shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            logger.info("从GitHub下载ModSecurity-nginx源码成功")
-            download_success = True
-        except subprocess.CalledProcessError:
-            logger.error("无法下载ModSecurity-nginx源码，请检查网络连接")
-            sys.exit(1)
-    
-    # 获取Nginx版本和源码
-    try:
-        # 获取Nginx版本和编译信息
-        nginx_version, configure_args, nginx_bin = get_nginx_info(IS_BT_ENV)
-        
-        if not nginx_version:
-            logger.error("无法获取Nginx版本，请确保Nginx已安装并可访问")
-            sys.exit(1)
-        
-        # 下载Nginx源码
-        logger.info(f"下载Nginx v{nginx_version} 源码...")
-        os.chdir(BUILD_DIR)
-        nginx_src_url = f"http://nginx.org/download/nginx-{nginx_version}.tar.gz"
-        
-        # 尝试不同的源下载Nginx
-        try:
-            # 尝试Gitee镜像
-            gitee_nginx_url = f"https://gitee.com/mirrors/nginx/raw/master/nginx-{nginx_version}.tar.gz"
-            subprocess.run(f"wget -q {gitee_nginx_url} -O nginx.tar.gz", shell=True, check=True)
-            logger.info("从Gitee镜像下载Nginx源码成功")
-        except subprocess.CalledProcessError:
-            # 如果失败，使用原始链接
-            logger.warning("从Gitee镜像下载Nginx失败，尝试官方源")
-            subprocess.run(f"wget -q {nginx_src_url} -O nginx.tar.gz", shell=True, check=True)
-            logger.info("从nginx.org下载Nginx源码成功")
-        
-        subprocess.run("tar -xzf nginx.tar.gz", shell=True, check=True)
-        nginx_src_dir = f"nginx-{nginx_version}"
-        
-        # 编译Nginx模块
-        logger.info("开始编译Nginx ModSecurity模块...")
-        os.chdir(os.path.join(BUILD_DIR, nginx_src_dir))
-        
-        # configure_args已在前面获取
-        if not configure_args:
-            logger.error("无法获取Nginx编译参数，将使用默认参数，可能导致模块不兼容")
-            # 设置默认的基本编译参数
-            configure_args = "--prefix=/usr/share/nginx --sbin-path=/usr/sbin/nginx --modules-path=/usr/lib/nginx/modules"
-        
-        # 使用全局缓存的系统类型
-        distro_family = DISTRO_FAMILY
-        
-        # 宝塔环境特殊处理
-        if IS_BT_ENV:
-            logger.info("检测到宝塔环境，将针对性优化编译参数...")
-            
-            # 检查宝塔Nginx的编译选项
-            bt_specific_options = []
-            
-            # 获取宝塔Nginx的configure_args
-            if "--with-openssl" in configure_args:
-                # 提取原来的openssl路径
-                openssl_path_match = re.search(r'--with-openssl=([^ ]+)', configure_args)
-                if openssl_path_match:
-                    openssl_path = openssl_path_match.group(1)
-                    # 如果路径存在，使用它，否则使用系统默认的
-                    if os.path.exists(openssl_path):
-                        bt_specific_options.append(f"--with-openssl={openssl_path}")
-                    else:
-                        # 移除这个选项，使用系统的OpenSSL
-                        configure_args = re.sub(r'--with-openssl=[^ ]+', '', configure_args)
-            
-            # 确保添加了正确的模块路径
-            if IS_BT_ENV and "--modules-path" not in configure_args:
-                configure_args += " --modules-path=/www/server/nginx/modules"
-        
-        # 如果系统中没有libperl-dev包，移除perl模块选项减少编译问题
-        if "--with-http_perl_module" in configure_args or "--with-http_perl_module=dynamic" in configure_args:
-            # 尝试检查libperl-dev是否安装
-            perl_dev_installed = False
-            try:
-                if distro_family == 'debian':
-                    result = subprocess.run("dpkg -l | grep libperl-dev", shell=True, 
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    perl_dev_installed = result.returncode == 0
-                elif distro_family == 'rhel':
-                    result = subprocess.run("rpm -qa | grep perl-devel", shell=True, 
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    perl_dev_installed = result.returncode == 0
-            except:
-                pass
-                
-            if not perl_dev_installed:
-                # 如果未安装，由于PERL模块常常导致问题，这里选择移除Perl模块
-                logger.warning("检测到Nginx配置中含有Perl模块，但系统中没有完整的Perl开发环境")
-                logger.warning("为确保成功编译，将从配置中移除Perl模块")
-                # 从配置中移除Perl模块
-                configure_args = re.sub(r'--with-http_perl_module[=\w]*', '', configure_args)
-                logger.info("已禁用Perl模块，以确保编译成功")
-        
-        # 确保GeoIP库已安装，而不是移除GeoIP模块
-        logger.info("确保安装GeoIP库以支持GeoIP模块...")
-        
-        # 确保安装GeoIP库
-        try:
-            if distro_family == 'debian':
-                # 安装GeoIP相关库
-                geoip_packages = ["libgeoip-dev", "libgeoip1", "geoip-bin"]
-                print(f"+++ 执行: apt-get install -y {' '.join(geoip_packages)} +++")
-                subprocess.run(["apt-get", "install", "-y"] + geoip_packages, check=True)
-                
-                # 安装Perl开发库，解决 "cannot find -lperl" 错误
-                perl_packages = ["libperl-dev", "perl"]
-                print(f"+++ 执行: apt-get install -y {' '.join(perl_packages)} +++")
-                subprocess.run(["apt-get", "install", "-y"] + perl_packages, check=True)
-                logger.info("已安装Debian/Ubuntu系统的GeoIP库")
-            elif distro_family == 'rhel':
-                # 安装GeoIP相关库
-                geoip_packages = ["GeoIP", "GeoIP-devel", "geoipupdate"]
-                print(f"+++ 执行: yum install -y {' '.join(geoip_packages)} +++")
-                subprocess.run(["yum", "install", "-y"] + geoip_packages, check=True)
-                
-                # 安装Perl开发库，解决 "cannot find -lperl" 错误
-                perl_packages = ["perl", "perl-devel", "perl-ExtUtils-Embed"]
-                print(f"+++ 执行: yum install -y {' '.join(perl_packages)} +++")
-                subprocess.run(["yum", "install", "-y"] + perl_packages, check=True)
-                logger.info("已安装CentOS/RHEL系统的GeoIP库")
-            else:
-                logger.warning("无法识别系统类型，请手动安装GeoIP库")
-                logger.warning("对于Debian/Ubuntu系统，使用: apt-get install -y libgeoip-dev libgeoip1 geoip-bin")
-                logger.warning("对于CentOS/RHEL系统，使用: yum install -y GeoIP GeoIP-devel geoipupdate")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"安装GeoIP库失败: {str(e)}")
-            logger.warning("将尝试继续编译，但可能会遇到GeoIP相关错误")
-        
-        # 添加ModSecurity模块
-        modsec_nginx_path = os.path.join(BUILD_DIR, "modsecurity-nginx")
-        
-        # 检查是否已经有PCRE库文件夹
-        pcre_pattern = re.compile(r'pcre-\d+\.\d+')
-        pcre_dir_exists = False
-        
-        # 检查当前目录下是否存在PCRE库文件夹
-        for item in os.listdir(os.getcwd()):
-            if os.path.isdir(item) and pcre_pattern.match(item):
-                logger.info(f"检测到已存在PCRE库: {item}，跳过下载")
-                pcre_dir_exists = True
-                break
-        
-        if not pcre_dir_exists:
-            logger.info("检测到缺少PCRE库，正在下载...")
-            try:
-                # 尝试下载最新的PCRE库
-                pcre_urls = [
-                    "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz",
-                    "https://ftp.exim.org/pub/pcre/pcre-8.45.tar.gz",
-                    "https://ftp.pcre.org/pub/pcre/pcre-8.45.tar.gz"
-                ]
-                
-                downloaded = False
-                for url in pcre_urls:
-                    try:
-                        pcre_file = os.path.join(os.getcwd(), os.path.basename(url))
-                        logger.info(f"尝试从{url}下载PCRE库...")
-                        subprocess.run(f"curl -L {url} -o {pcre_file}", shell=True, check=True)
-                        
-                        # 解压PCRE库
-                        logger.info("解压PCRE库...")
-                        subprocess.run(f"tar -xzf {pcre_file}", shell=True, check=True)
-                        logger.info("PCRE库准备完成")
-                        
-                        downloaded = True
-                        break
-                    except subprocess.CalledProcessError:
-                        logger.warning(f"从{url}下载PCRE库失败，尝试下一个源...")
-                
-                if not downloaded:
-                    logger.error("所有PCRE库源下载失败")
-                    logger.warning("将尝试继续编译，但可能会失败")
-            except Exception as e:
-                logger.error(f"下载PCRE库失败: {str(e)}")
-                logger.warning("将尝试继续编译，但可能会失败")
-        
-        # 构建编译命令
-        # 注意：当在Nginx源码目录中存在pcre-*目录时，Nginx会优先使用该目录的PCRE库
-        compile_cmd = f"./configure {configure_args} --add-dynamic-module={modsec_nginx_path}"
-        print(f"+++ 执行: {compile_cmd} +++")
-        try:
-            # 捕获并保存所有输出，便于调试
-            process = subprocess.Popen(compile_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-            stdout, stderr = process.communicate()
-            
-            # 显示所有输出
-            if stdout:
-                print("Configure 标准输出:")
-                print(stdout)
-                
-            # 如果返回非零状态，显示错误并退出
-            if process.returncode != 0:
-                print("\n\nConfigure 错误输出:")
-                print(stderr)
-                # 检查常见的错误原因
-                missing_deps = []
-                if "not found" in stderr:
-                    missing_deps.append("缺少依赖库")
-                if "error: C" in stderr:
-                    missing_deps.append("编译器错误")
-                if "fatal error:" in stderr and ".h" in stderr:
-                    # 寻找缺失的头文件
-                    missing_headers = re.findall(r'fatal error: ([\w\/\.]+\.h)', stderr)
-                    if missing_headers:
-                        for header in missing_headers:
-                            missing_deps.append(f"缺少头文件 {header}")
-                    
-                error_msg = "编译配置失败"
-                if missing_deps:
-                    error_msg += ": " + ", ".join(missing_deps)
-                
-                logger.error(f"{error_msg}\n请检查编译环境并确保所有依赖项已安装")
-                
-                # 根据系统类型提供不同的建议
-                if distro_family == 'debian':
-                    logger.error("请尝试手动安装以下开发包: build-essential libpcre3-dev libxml2-dev libcurl4-openssl-dev")
-                    logger.error("您可能需要运行: sudo apt update && sudo apt upgrade -y")
-                else:  # rhel
-                    logger.error("请尝试手动安装以下开发包: gcc gcc-c++ make automake pcre-devel libxml2-devel curl-devel")
-                
-                sys.exit(1)
-        
-            print("+++ 执行: make modules +++")
-            # 同样捕获make命令的输出
-            process = subprocess.Popen("make modules", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-            stdout, stderr = process.communicate()
-            
-            if stdout:
-                print("Make 标准输出:")
-                print(stdout)
-                
-            if process.returncode != 0:
-                print("\n\nMake 错误输出:")
-                print(stderr)
-                logger.error("模块编译失败\n请检查上述错误信息")
-                sys.exit(1)
-                
-            logger.info("编译Nginx ModSecurity模块成功")
-        except Exception as e:
-            logger.error(f"编译过程出现异常: {str(e)}")
-            logger.error("请确保安装了所有必要的开发包：build-essential libpcre3-dev libxml2-dev libcurl4-openssl-dev")
-            sys.exit(1)
-        
-        # 创建模块目录并复制模块
-        modules_dir = os.path.join(NGINX_PATH, "modules")
-        os.makedirs(modules_dir, exist_ok=True)
-        
-        # 复制模块
-        module_path = os.path.join(BUILD_DIR, nginx_src_dir, "objs/ngx_http_modsecurity_module.so")
-        dst_module_path = os.path.join(modules_dir, "ngx_http_modsecurity_module.so")
-        shutil.copy(module_path, dst_module_path)
-        
-        # 测试模块兼容性
-        logger.info("测试ModSecurity模块与当前Nginx的兼容性...")
-        test_module_cmd = f"NGINX_CONF_FILE=/tmp/modsec_test.conf {NGINX_BIN} -t"
-        
-        # 创建临时配置文件用于测试
-        with open("/tmp/modsec_test.conf", "w") as f:
-            f.write(f"load_module {dst_module_path};\nevents {{ }}\nhttp {{ }}")
-        
-        try:
-            subprocess.run(test_module_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            logger.info("模块兼容性测试成功，模块可以正常加载")
-        except subprocess.CalledProcessError as e:
-            err_output = e.stderr.decode() if e.stderr else ""
-            is_binary_incompatible = "not binary compatible" in err_output
-            
-            logger.error(f"模块兼容性测试失败，该模块与当前Nginx版本不兼容")
-            logger.error(f"错误详情: {err_output}")
-            
-            if IS_BT_ENV:
-                nginx_version_exact = get_nginx_info(True)[0] or "unknown"
-                logger.error(f"在宝塔环境(Nginx {nginx_version_exact})中出现了模块二进制兼容性问题")
-                
-                # 如果二进制不兼容，尝试特定的宝塔修复方式
-                if is_binary_incompatible:
-                    logger.info("正在尝试获取宝塔的精确版本信息...")  
-                    
-                    logger.error("有两种解决方案:")
-                    logger.error(f"1. 使用宝塔官方插件安装ModSecurity (推荐)")
-                    logger.error("   访问宝塔面板 > 插件 > 安全 > 搜索ModSecurity进行安装")
-                    logger.error(f"2. 下列是手动配置请谨慎操作:")
-                    logger.error(f"   a. 将模块文件 {dst_module_path}.incompatible 重命名为 {dst_module_path}")
-                    logger.error(f"   b. 在Nginx配置文件中添加: load_module {dst_module_path};")
-                    logger.error(f"   c. 在http块中添加: modsecurity on; modsecurity_rules_file /www/server/nginx/conf.d/modsecurity.conf;")
-                    logger.error(f"   注意: 上述手动操作可能导致Nginx无法正常启动")
-                
-            else:
-                logger.error("模块与Nginx版本不兼容的解决方案:")
-                logger.error("1. 使用相同的Nginx版本重新编译模块")
-                logger.error("2. 更新Nginx到与模块兼容的版本")
-                logger.error("3. 使用官方包管理器安装ModSecurity")
-                
-            # 备份不兼容模块
-            incompatible_backup = f"{dst_module_path}.incompatible"
-            try:
-                os.rename(dst_module_path, incompatible_backup)
-                logger.info(f"已将不兼容的模块备份为 {incompatible_backup}")
-            except Exception as rename_err:
-                logger.warning(f"无法备份不兼容模块: {rename_err}")
-                
-            # 如果在宝塔环境中遇到二进制兼容性问题，给出更详细的指导
-            if IS_BT_ENV and is_binary_incompatible:
-                logger.info("\n** 宝塔兼容性问题特别说明 **")
-                logger.info("该问题通常是因为宝塔面板使用了定制版的Nginx编译参数，导致模块与Nginx二进制不兼容")
-                logger.info("强烈建议使用宝塔自带的插件管理功能安装ModSecurity\n")
-        finally:
-            # 清理临时文件
-            if os.path.exists("/tmp/modsec_test.conf"):
-                os.remove("/tmp/modsec_test.conf")
-                
-        logger.info("Nginx ModSecurity模块安装完成")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"ModSecurity-nginx安装失败: {e}")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"获取Nginx版本或编译模块时出错: {e}")
-        sys.exit(1)
-
-# 下载OWASP ModSecurity核心规则集(CRS)
-def download_owasp_crs():
-    """下载OWASP ModSecurity核心规则集"""
-    logger.info("下载OWASP ModSecurity核心规则集...")
-    os.chdir(BUILD_DIR)
-    
-    # 创建CRS目录 - 根据环境选择路径
-    if IS_BT_ENV:
-        crs_dir = "/www/server/nginx/modsecurity-crs"
-    else:
-        crs_dir = "/etc/nginx/modsecurity-crs"
-        
-    logger.info(f"使用CRS规则目录: {crs_dir}")
-    os.makedirs(crs_dir, exist_ok=True)
-    
-    # 优先尝试从supine-win的Gitee镜像下载
-    try:
-        subprocess.run("git clone https://gitee.com/supine-win/coreruleset.git", 
-                     shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        logger.info("从supine-win的Gitee镜像下载CRS成功")
-        
-        # 复制CRS文件
-        src_dir = os.path.join(BUILD_DIR, "coreruleset")
-        for item in os.listdir(src_dir):
-            s = os.path.join(src_dir, item)
-            d = os.path.join(crs_dir, item)
-            if os.path.isdir(s):
-                shutil.copytree(s, d, dirs_exist_ok=True)
-            else:
-                shutil.copy2(s, d)
-        logger.info(f"CRS文件已复制到{crs_dir}/")
-    except subprocess.CalledProcessError:
-        logger.warning("从supine-win的镜像下载失败，尝试官方Gitee镜像")
-        try:
-            subprocess.run("git clone https://gitee.com/mirrors/owasp-modsecurity-crs.git", 
-                         shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            logger.info("从Gitee镜像下载CRS成功")
-            
-            # 复制CRS文件
-            src_dir = os.path.join(BUILD_DIR, "owasp-modsecurity-crs")
-            for item in os.listdir(src_dir):
-                s = os.path.join(src_dir, item)
-                d = os.path.join(crs_dir, item)
-                if os.path.isdir(s):
-                    shutil.copytree(s, d, dirs_exist_ok=True)
+                # 尝试修复镜像源
+                if fix_centos_yum_mirrors():
+                    # 如果修复成功，重新尝试安装
+                    logger.info("镜像源修复成功，重新尝试安装依赖")
+                    process = subprocess.run(cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
                 else:
-                    shutil.copy2(s, d)
-            logger.info(f"从Gitee镜像下载的CRS文件已复制到{crs_dir}/")
-        except subprocess.CalledProcessError:
-            logger.warning("从Gitee镜像下载失败，尝试从GitHub下载")
-            try:
-                subprocess.run("git clone https://github.com/coreruleset/coreruleset.git", 
-                             shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                logger.info("从GitHub下载CRS成功")
-                
-                # 复制CRS文件
-                src_dir = os.path.join(BUILD_DIR, "coreruleset")
-                for item in os.listdir(src_dir):
-                    s = os.path.join(src_dir, item)
-                    d = os.path.join(crs_dir, item)
-                    if os.path.isdir(s):
-                        shutil.copytree(s, d, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(s, d)
-                logger.info(f"从GitHub下载的CRS文件已复制到{crs_dir}/")
-            except subprocess.CalledProcessError:
-                logger.error("下载CRS失败")
-                sys.exit(1)
-    
-    # 创建并复制默认配置
-    if os.path.exists(os.path.join(crs_dir, "crs-setup.conf.example")):
-        shutil.copy(
-            os.path.join(crs_dir, "crs-setup.conf.example"),
-            os.path.join(crs_dir, "crs-setup.conf")
-        )
-        logger.info("CRS配置文件已创建")
-    else:
-        logger.warning("未找到CRS配置示例文件，将创建基本配置")
-        with open(os.path.join(crs_dir, "crs-setup.conf"), 'w') as f:
-            f.write("# 基本CRS配置\n")
-    
-    logger.info("OWASP CRS安装完成")
+                    # 如果镜像源修复失败，尝试直接安装RPM包
+                    logger.warning("镜像源修复失败，尝试使用直接RPM包安装方法")
+                    return install_direct_rpm_dependencies(dependencies)
+            
+            # 如果还是失败，返回失败状态
+            if process.returncode != 0:
+                logger.error("依赖安装失败，尝试使用直接RPM包安装或跳过依赖安装")
+                return False
+        
+        logger.info("依赖安装成功")
+        return True
+    except Exception as e:
+        logger.error(f"依赖安装过程中发生异常: {e}")
+        return False
 
-# 配置ModSecurity
-def configure_modsecurity():
-    """配置ModSecurity"""
-    logger.info("配置ModSecurity...")
+def install_direct_rpm_dependencies(dependencies=None):
+    """使用直接RPM包安装方式，完全绕过YUM的依赖安装方案
     
-    # 创建ModSecurity配置目录
-    if IS_BT_ENV:
-        modsec_dir = "/www/server/nginx/modsecurity"
+    专为CentOS 7 EOL环境设计，直接从镜像站点下载RPM包并安装
+    
+    Args:
+        dependencies (list): 可选的依赖包列表，如果为None则使用预定义列表
+        
+    Returns:
+        bool: 是否成功安装依赖
+    """
+    logger.info("使用直接RPM包安装方法，绕过YUM")
+    
+    # 确定CentOS版本
+    centos_version = get_centos_version()
+    
+    # 针对CentOS 7预定义的RPM包列表
+    rpm_packages = {
+        # 基本开发工具
+        'development-tools': [
+            "https://mirrors.aliyun.com/centos-vault/7.9.2009/os/x86_64/Packages/gcc-4.8.5-44.el7.x86_64.rpm",
+            "https://mirrors.aliyun.com/centos-vault/7.9.2009/os/x86_64/Packages/gcc-c++-4.8.5-44.el7.x86_64.rpm",
+            "https://mirrors.aliyun.com/centos-vault/7.9.2009/os/x86_64/Packages/make-3.82-24.el7.x86_64.rpm"
+        ],
+        # 核心依赖
+        'core-deps': [
+            "https://mirrors.aliyun.com/centos-vault/7.9.2009/os/x86_64/Packages/pcre-devel-8.32-17.el7.x86_64.rpm",
+            "https://mirrors.aliyun.com/centos-vault/7.9.2009/os/x86_64/Packages/openssl-devel-1.0.2k-25.el7_9.x86_64.rpm",
+            "https://mirrors.aliyun.com/centos-vault/7.9.2009/os/x86_64/Packages/zlib-devel-1.2.7-19.el7_9.x86_64.rpm"
+        ],
+        # ModSecurity依赖
+        'modsecurity-deps': [
+            "https://mirrors.aliyun.com/centos-vault/7.9.2009/os/x86_64/Packages/geoip-devel-1.5.0-14.el7.x86_64.rpm",
+            "https://mirrors.aliyun.com/centos-vault/7.9.2009/os/x86_64/Packages/libxml2-devel-2.9.1-6.el7_9.6.x86_64.rpm",
+            "https://mirrors.aliyun.com/centos-vault/7.9.2009/os/x86_64/Packages/libcurl-devel-7.29.0-59.el7_9.1.x86_64.rpm",
+            "https://mirrors.aliyun.com/centos-vault/7.9.2009/os/x86_64/Packages/yajl-devel-2.0.4-4.el7.x86_64.rpm"
+        ],
+        # EPEL依赖
+        'epel-deps': [
+            "https://mirrors.aliyun.com/epel/7/x86_64/Packages/c/cjson-devel-1.7.12-1.el7.x86_64.rpm"
+        ]
+    }
+    
+    # 创建临时目录用于下载RPM包
+    temp_dir = "/tmp/modsecurity_rpms"
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    # 统计成功安装的包数量
+    install_success_count = 0
+    total_packages = sum(len(pkgs) for pkgs in rpm_packages.values())
+    
+    # 逐个类别安装
+    for category, packages in rpm_packages.items():
+        logger.info(f"安装 {category} 类别的RPM包...")
+        
+        # 逐个包下载和安装
+        for pkg_url in packages:
+            try:
+                # 提取包名
+                pkg_name = os.path.basename(pkg_url)
+                pkg_path = os.path.join(temp_dir, pkg_name)
+                
+                # 下载包
+                logger.info(f"下载 {pkg_name}...")
+                download_success = download_rpm_package(pkg_url, pkg_path)
+                
+                if not download_success:
+                    logger.warning(f"下载 {pkg_name} 失败，尝试下一个包")
+                    continue
+                
+                # 验证RPM包
+                if not validate_rpm_package(pkg_path):
+                    logger.warning(f"验证 {pkg_name} 失败，尝试下一个包")
+                    continue
+                
+                # 安装包
+                logger.info(f"安装 {pkg_name}...")
+                install_cmd = f"rpm -Uvh --force --nodeps {pkg_path}"
+                process = subprocess.run(install_cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+                
+                if process.returncode == 0:
+                    logger.info(f"成功安装 {pkg_name}")
+                    install_success_count += 1
+                else:
+                    logger.warning(f"安装 {pkg_name} 失败: {process.stderr}")
+            except Exception as e:
+                logger.error(f"处理包时出错: {e}")
+    
+    # 清理临时目录
+    try:
+        shutil.rmtree(temp_dir)
+    except Exception as e:
+        logger.warning(f"清理临时目录失败: {e}")
+    
+    # 如果至少安装了一半的包，就认为基本成功
+    if install_success_count >= total_packages / 2:
+        logger.info(f"直接RPM安装部分成功: {install_success_count}/{total_packages} 包已安装")
+        return True
     else:
-        modsec_dir = "/etc/nginx/modsecurity"
+        logger.error(f"直接RPM安装失败: 只有 {install_success_count}/{total_packages} 包安装成功")
+        return False
+
+def download_rpm_package(url, destination):
+    """从多个镜像源下载RPM包
     
-    logger.info(f"使用ModSecurity配置目录: {modsec_dir}")
-    os.makedirs(modsec_dir, exist_ok=True)
+    Args:
+        url (str): 包的URL
+        destination (str): 目标文件路径
+        
+    Returns:
+        bool: 是否成功下载
+    """
+    # 生成备选URL
+    alternate_urls = [url]
     
-    # 复制默认配置
-    modsec_conf_src = os.path.join(BUILD_DIR, "modsecurity/modsecurity.conf-recommended")
-    modsec_conf_dst = os.path.join(modsec_dir, "modsecurity.conf")
-    shutil.copy(modsec_conf_src, modsec_conf_dst)
+    # 如果是阿里云URL，添加清华源作为备选
+    if "mirrors.aliyun.com" in url:
+        tsinghua_url = url.replace("mirrors.aliyun.com", "mirrors.tuna.tsinghua.edu.cn")
+        alternate_urls.append(tsinghua_url)
     
-    # 复制unicode.mapping文件
-    unicode_mapping_src = os.path.join(BUILD_DIR, "modsecurity/unicode.mapping")
-    unicode_mapping_dst = os.path.join(modsec_dir, "unicode.mapping")
-    if os.path.exists(unicode_mapping_src):
-        logger.info(f"复制unicode.mapping文件到{modsec_dir}")
-        shutil.copy(unicode_mapping_src, unicode_mapping_dst)
-    else:
-        logger.warning("未找到unicode.mapping文件，尝试从其他目录查找")
-        # 尝试从可能的位置查找
-        possible_paths = [
-            # 已经在上面检查过的路径不需要再次添加: os.path.join(BUILD_DIR, "modsecurity/unicode.mapping")
-            os.path.join(BUILD_DIR, "modsecurity-*/unicode.mapping"),
-            "/usr/local/modsecurity/unicode.mapping",
-            "/usr/share/modsecurity/unicode.mapping",
-            "/usr/local/lib/modsecurity/unicode.mapping",
-            "/opt/modsecurity/unicode.mapping"
+    # 尝试从不同URL下载
+    for alt_url in alternate_urls:
+        try:
+            logger.debug(f"尝试从 {alt_url} 下载...")
+            
+            # 检测系统中可用的下载工具
+            if shutil.which("wget"):
+                cmd = f"wget -q {alt_url} -O {destination}"
+            elif shutil.which("curl"):
+                cmd = f"curl -s -L {alt_url} -o {destination}"
+            else:
+                logger.error("系统中未找到wget或curl下载工具")
+                return False
+                
+            subprocess.run(cmd, shell=True, check=True)
+            
+            # 验证下载是否成功（文件存在且大小合理）
+            if os.path.exists(destination) and os.path.getsize(destination) > 10240:  # 至少10KB
+                logger.debug(f"从 {alt_url} 下载文件成功")
+                return True
+            else:
+                logger.warning(f"下载的文件 {destination} 大小异常")
+                if os.path.exists(destination):
+                    os.remove(destination)
+        except subprocess.CalledProcessError:
+            logger.warning(f"从 {alt_url} 下载文件失败")
+            if os.path.exists(destination):
+                os.remove(destination)
+            
+    logger.error(f"所有URL下载均失败: {url}")
+    return False
+
+def validate_rpm_package(package_path):
+    """验证下载的RPM包是否有效
+    
+    Args:
+        package_path (str): RPM包的路径
+        
+    Returns:
+        bool: 是否为有效的RPM包
+    """
+    try:
+        # 检查文件类型是否为RPM
+        file_cmd = f"file {package_path}"
+        process = subprocess.run(file_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        
+        if "RPM" in process.stdout:
+            return True
+        else:
+            logger.warning(f"{package_path} 不是有效的RPM包")
+            return False
+    except Exception as e:
+        logger.error(f"验证RPM包失败: {e}")
+        return False
+
+#############################################################
+# ModSecurity下载和安装功能
+#############################################################
+
+def download_modsecurity(force_update=False):
+    """下载ModSecurity源代码并准备编译环境
+    
+    Args:
+        force_update (bool): 是否强制更新已存在的代码
+        
+    Returns:
+        tuple: (bool, str) 是否成功及源代码目录路径
+    """
+    logger.info("开始下载ModSecurity...")
+    
+    # 创建构建目录
+    build_dir = DEFAULT_BUILD_DIR
+    if not os.path.exists(build_dir):
+        os.makedirs(build_dir, exist_ok=True)
+    
+    # ModSecurity主库路径
+    modsec_dir = os.path.join(build_dir, "ModSecurity")
+    
+    # 下载ModSecurity代码
+    if not clone_or_update_repo("modsecurity", modsec_dir, force_update):
+        logger.error("下载ModSecurity失败")
+        return False, ""
+    
+    # 编译ModSecurity
+    if not compile_modsecurity(modsec_dir):
+        logger.error("编译ModSecurity失败")
+        return False, ""
+    
+    # 下载ModSecurity-Nginx连接器
+    connector_dir = os.path.join(build_dir, "ModSecurity-nginx")
+    if not clone_or_update_repo("modsecurity-nginx", connector_dir, force_update):
+        logger.error("下载ModSecurity-Nginx连接器失败")
+        return False, ""
+    
+    # 下载 OWASP CRS 规则集
+    crs_dir = os.path.join(build_dir, "owasp-modsecurity-crs")
+    if not clone_or_update_repo("owasp-crs", crs_dir, force_update):
+        logger.warning("下载 OWASP CRS 规则集失败，但将继续安装ModSecurity")
+    
+    return True, modsec_dir
+
+def compile_modsecurity(modsec_dir):
+    """编译ModSecurity库
+    
+    Args:
+        modsec_dir (str): ModSecurity源代码目录
+        
+    Returns:
+        bool: 编译是否成功
+    """
+    logger.info("开始编译ModSecurity...")
+    
+    try:
+        # 进入源代码目录
+        os.chdir(modsec_dir)
+        
+        # 执行编译前准备
+        logger.info("生成编译配置...")
+        commands = [
+            "./build.sh",
+            "./configure --disable-doxygen-doc"
         ]
         
-        # 根据环境添加宝塔特定路径
-        if IS_BT_ENV:
-            possible_paths.append("/www/server/nginx/conf/modsecurity/unicode.mapping")
-            possible_paths.append("/www/server/modsecurity/unicode.mapping")
-        
-        found = False
-        for path_pattern in possible_paths:
-            for path in glob.glob(path_pattern):
-                if os.path.exists(path):
-                    logger.info(f"在{path}找到unicode.mapping文件")
-                    shutil.copy(path, unicode_mapping_dst)
-                    found = True
-                    break
-            if found:
-                break
-                
-        if not found:
-            # 如果仍未找到，创建一个空文件并显示警告
-            logger.error("无法找到unicode.mapping文件，请手动配置")
-            with open(unicode_mapping_dst, 'w') as f:
-                f.write("# This is a placeholder unicode.mapping file\n")
-            logger.warning("创建了一个空的unicode.mapping文件，请手动配置")
-    
-    # 修改配置以启用ModSecurity并修正路径
-    with open(modsec_conf_dst, 'r') as file:
-        conf_content = file.read()
-    
-    # 启用ModSecurity
-    conf_content = conf_content.replace('SecRuleEngine DetectionOnly', 'SecRuleEngine On')
-    
-    # 修正unicode.mapping文件路径为绝对路径
-    unicode_map_file = os.path.join(modsec_dir, "unicode.mapping")
-    
-    # 通过正则表达式替换SecUnicodeMapFile指令的路径
-    pattern = r'SecUnicodeMapFile\s+[^\n]+'
-    replacement = f'SecUnicodeMapFile {unicode_map_file}'
-    conf_content = re.sub(pattern, replacement, conf_content)
-    
-    logger.info(f"将unicode.mapping路径设置为绝对路径: {unicode_map_file}")
-    
-    with open(modsec_conf_dst, 'w') as file:
-        file.write(conf_content)
-        
-    # 在宝塔环境下，同步标准路径的ModSecurity配置
-    if IS_BT_ENV:
-        # 确保标准路径的目录存在
-        std_modsec_dir = "/etc/nginx/modsecurity"
-        std_conf_d_dir = "/etc/nginx/conf.d"
-        std_modules_dir = "/etc/nginx/modules-enabled"
-        
-        os.makedirs(std_modsec_dir, exist_ok=True)
-        os.makedirs(std_conf_d_dir, exist_ok=True)
-        os.makedirs(std_modules_dir, exist_ok=True)
-        
-        # 检测模块兼容性
-        module_path = os.path.join("/www/server/nginx/modules", "ngx_http_modsecurity_module.so")
-        if os.path.exists(module_path):
-            logger.info("检测模块与宝塔 Nginx 的兼容性...")
-            test_cmd = f"{NGINX_BIN} -t -c /tmp/bt_modsec_test.conf"
+        for cmd in commands:
+            logger.info(f"执行: {cmd}")
+            process = subprocess.run(cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
             
-            # 创建测试配置
-            with open("/tmp/bt_modsec_test.conf", "w") as f:
-                f.write(f"load_module {module_path};\nevents {{ }}\nhttp {{ }}")
-                
-            try:
-                subprocess.run(test_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                logger.info("模块与宝塔 Nginx 兼容性测试通过")
-            except subprocess.CalledProcessError as e:
-                err_output = e.stderr.decode() if e.stderr else ""
-                if "not binary compatible" in err_output:
-                    logger.error(f"模块与宝塔 Nginx 二进制不兼容，请使用宝塔插件中心安装ModSecurity")
-                    logger.error("或者使用宝塔的同一版本Nginx重新编译ModSecurity模块")
-                else:
-                    logger.error(f"模块测试遇到其他错误: {err_output}")
-            finally:
-                if os.path.exists("/tmp/bt_modsec_test.conf"):
-                    os.remove("/tmp/bt_modsec_test.conf")
+            if process.returncode != 0:
+                logger.error(f"命令 {cmd} 执行失败: {process.stderr}")
+                return False
         
-        # 同步unicode.mapping文件
-        std_unicode_mapping = os.path.join(std_modsec_dir, "unicode.mapping")
-        if os.path.exists(unicode_mapping_dst):
-            logger.info(f"同步unicode.mapping文件到标准路径: {std_unicode_mapping}")
-            shutil.copy(unicode_mapping_dst, std_unicode_mapping)
+        # 编译和安装
+        logger.info("编译和安装ModSecurity...")
+        compile_cmds = [
+            "make",
+            "make install"
+        ]
         
-        # 同步modsecurity.conf文件
-        std_modsec_conf = os.path.join(std_modsec_dir, "modsecurity.conf")
-        logger.info(f"同步ModSecurity配置到标准路径: {std_modsec_conf}")
-        
-        # 修改标准路径的配置文件，确保使用正确的unicode.mapping路径
-        with open(modsec_conf_dst, 'r') as file:
-            std_conf_content = file.read()
-        
-        with open(std_modsec_conf, 'w') as file:
-            file.write(std_conf_content)
-    
-    # 创建include.conf配置
-    include_conf = os.path.join(modsec_dir, "include.conf")
-    
-    # 根据环境调整路径
-    if IS_BT_ENV:
-        crs_path = "/www/server/nginx/modsecurity-crs"
-    else:
-        crs_path = "/etc/nginx/modsecurity-crs"
-    
-    with open(include_conf, 'w') as file:
-        file.write(f"""# ModSecurity配置
-Include "{modsec_dir}/modsecurity.conf"
-Include "{crs_path}/crs-setup.conf"
-Include "{crs_path}/rules/*.conf"
-""")
-    
-    # 创建Nginx ModSecurity配置 - 拆分为两个文件
-    
-    # 1. 创建加载模块的配置文件（必须在主配置文件的最顶层）
-    if IS_BT_ENV:
-        modsec_module_conf = "/www/server/nginx/modules-enabled/50-mod-http-modsecurity.conf"
-    else:
-        modsec_module_conf = "/etc/nginx/modules-enabled/50-mod-http-modsecurity.conf"
-    
-    logger.info(f"使用模块配置文件: {modsec_module_conf}")
-    os.makedirs(os.path.dirname(modsec_module_conf), exist_ok=True)
-    # 获取模块的绝对路径
-    module_file = os.path.join(NGINX_PATH, "modules/ngx_http_modsecurity_module.so")
-    
-    with open(modsec_module_conf, 'w') as file:
-        file.write(f"""# 加载ModSecurity模块 - 这必须放在主配置文件的顶层
-load_module {module_file};
-""")
-    
-    # 2. 创建实际启用ModSecurity的配置文件（在http块内包含）
-    if IS_BT_ENV:
-        modsec_nginx_conf = "/www/server/nginx/conf.d/modsecurity.conf"
-        std_modsec_nginx_conf = "/etc/nginx/conf.d/modsecurity.conf"
-    else:
-        modsec_nginx_conf = "/etc/nginx/conf.d/modsecurity.conf"
-        std_modsec_nginx_conf = modsec_nginx_conf
-        
-    logger.info(f"使用Nginx配置文件: {modsec_nginx_conf}")
-    os.makedirs(os.path.dirname(modsec_nginx_conf), exist_ok=True)
-    
-    with open(modsec_nginx_conf, 'w') as file:
-        file.write(f"""# 在server块内启用ModSecurity
-modsecurity on;
-modsecurity_rules_file {modsec_dir}/include.conf;
-""")
-        
-    # 在宝塔环境下，同步标准路径的Nginx配置文件
-    if IS_BT_ENV:
-        os.makedirs(os.path.dirname(std_modsec_nginx_conf), exist_ok=True)
-        logger.info(f"同步Nginx配置到标准路径: {std_modsec_nginx_conf}")
-        
-        with open(std_modsec_nginx_conf, 'w') as file:
-            file.write(f"""# 在server块内启用ModSecurity
-modsecurity on;
-modsecurity_rules_file {std_modsec_dir}/include.conf;
-""")
+        for cmd in compile_cmds:
+            logger.info(f"执行: {cmd}")
+            process = subprocess.run(cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
             
-        # 创建标准路径的include.conf文件
-        std_include_conf = os.path.join(std_modsec_dir, "include.conf")
-        std_crs_path = "/etc/nginx/modsecurity-crs"
+            if process.returncode != 0:
+                logger.error(f"命令 {cmd} 执行失败: {process.stderr}")
+                return False
         
-        with open(std_include_conf, 'w') as file:
-            file.write(f"""# ModSecurity配置
-Include "{std_modsec_dir}/modsecurity.conf"
-Include "{crs_path}/crs-setup.conf"
-Include "{crs_path}/rules/*.conf"
-""")
-    
-    if IS_BT_ENV:
-        logger.info("宝塔环境ModSecurity配置完成，请按以下步骤手动配置:")
-        
-        module_path = os.path.join(NGINX_PATH, 'modules/ngx_http_modsecurity_module.so')
-        # 检测模块是否存在
-        if os.path.exists(module_path):
-            logger.info("1. 使用宝塔面板的'网站'功能窗口，选择要保护的网站，点击'设置'")
-            logger.info("2. 在Nginx配置中添加以下内容（服务器配置栏目 > '配置修改'）:")
-            logger.info("   # 在配置文件顶部(events块之前)添加:")
-            logger.info(f"   load_module {module_path};")
-            logger.info("")
-            logger.info("   # 在http块内添加:")
-            logger.info("   modsecurity on;")
-            logger.info(f"   modsecurity_rules_file {modsec_dir}/include.conf;")
-            logger.info("")
-        else:
-            logger.warning(f"模块文件{module_path}不存在，可能由于兼容性问题被删除")
-            logger.info("***强烈建议使用宝塔插件市场安装ModSecurity***")
-            logger.info("1. 访问宝塔面板 > 软件商店 > 安全")
-            logger.info("2. 搜索并安装ModSecurity插件")
-        
-        logger.info("注意：如果在加载模块后出现\"模块不兼容\"的错误，请使用宝塔插件市场安装ModSecurity而不是手动配置")
-    else:
-        logger.info("ModSecurity配置完成，请将以下内容添加到您的Nginx主配置文件的顶层:")
-        logger.info(f"include {modsec_module_conf};")
-        logger.info("并将以下内容添加到http块:")
-        logger.info(f"include {modsec_nginx_conf};")
-    
-    # 重启Nginx - 兼容不同系统和环境
-    logger.info("测试Nginx配置并重启服务...")
-    try:
-        # 首先测试配置是否正确 - 使用适当的Nginx可执行文件路径
-        nginx_test_cmd = f"{NGINX_BIN} -t -c {NGINX_CONF}"
-        logger.info(f"执行配置测试命令: {nginx_test_cmd}")
-        subprocess.run(nginx_test_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        logger.info("Nginx配置测试成功")
-        
-        # 采用不同的重启策略
-        restart_success = False
-        
-        # 1. 先尝试systemctl命令
-        try:
-            logger.info("尝试使用systemctl重启Nginx...")
-            subprocess.run("systemctl restart nginx", shell=True, check=True, 
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            restart_success = True
-            logger.info("使用systemctl重启Nginx成功")
-        except subprocess.CalledProcessError:
-            logger.warning("systemctl重启失败，尝试其他方法")
-        
-        # 2. 如果失败，尝试service命令
-        if not restart_success:
-            try:
-                logger.info("尝试使用service重启Nginx...")
-                subprocess.run("service nginx restart", shell=True, check=True,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                restart_success = True
-                logger.info("使用service重启Nginx成功")
-            except subprocess.CalledProcessError:
-                logger.warning("service重启失败，尝试其他方法")
-        
-        # 3. 如果在宝塔环境，尝试宝塔特定命令
-        if not restart_success and IS_BT_ENV:
-            try:
-                logger.info("在宝塔环境中尝试重启Nginx...")
-                
-                # 首先尝试使用宝塔的Nginx可执行文件
-                bt_nginx_reload_cmd = f"{NGINX_BIN} -s reload"
-                logger.info(f"尝试使用宝塔Nginx可执行文件: {bt_nginx_reload_cmd}")
-                subprocess.run(bt_nginx_reload_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                restart_success = True
-                logger.info("使用宝塔Nginx可执行文件重启成功")
-            except subprocess.CalledProcessError:
-                logger.warning("宝塔Nginx reload命令失败，尝试启动Nginx...")
-                try:
-                    # 如果Nginx未运行，尝试启动，必须指定配置文件路径
-                    bt_nginx_start_cmd = f"{NGINX_BIN} -c {NGINX_CONF}"
-                    logger.info(f"尝试启动Nginx: {bt_nginx_start_cmd}")
-                    subprocess.run(bt_nginx_start_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    restart_success = True
-                    logger.info("启动Nginx成功")
-                except subprocess.CalledProcessError:
-                    logger.warning("宝塔Nginx启动命令失败")
-                    
-                    # 尝试最后的备选方案，使用Nginx信号控制
-                    try:
-                        # 尝试发送USR2信号，这对宝塔Nginx也可能能工作
-                        nginx_pid_file = "/www/server/nginx/logs/nginx.pid"
-                        if os.path.exists(nginx_pid_file):
-                            with open(nginx_pid_file, 'r') as f:
-                                try:
-                                    pid = int(f.read().strip())
-                                    logger.info(f"尝试发送重载信号给Nginx进程(PID: {pid})")
-                                    os.kill(pid, signal.SIGUSR2)
-                                    restart_success = True
-                                    logger.info("发送重载信号成功")
-                                except (ValueError, ProcessLookupError) as e:
-                                    logger.warning(f"无法发送信号到Nginx进程: {e}")
-                        else:
-                            logger.warning(f"Nginx PID文件不存在: {nginx_pid_file}")
-                    except Exception as e:
-                        logger.warning(f"尝试发送信号失败: {e}")
-                    
-                    logger.warning("所有重启Nginx的方法均失败，请手动重启Nginx")
-            except subprocess.CalledProcessError:
-                logger.warning("宝塔特定重启方式失败")
-                
-        # 4. 直接尝试nginx -s reload (指定配置文件路径)
-        if not restart_success:
-            try:
-                nginx_reload_cmd = f"nginx -c {NGINX_CONF} -s reload"
-                logger.info(f"尝试使用指定配置的nginx重载命令: {nginx_reload_cmd}")
-                subprocess.run(nginx_reload_cmd, shell=True, check=True,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                restart_success = True
-                logger.info("使用nginx -s reload重新加载成功")
-            except subprocess.CalledProcessError:
-                logger.warning("nginx -s reload 失败")
-        
-        if restart_success:
-            logger.info("Nginx已重启，ModSecurity现已启用")
-        else:
-            logger.error("所有重启方法均失败，请手动重启Nginx：")
-            if IS_BT_ENV:
-                logger.error(f"1. {NGINX_BIN} -c {NGINX_CONF} -s reload")
-                logger.error(f"2. {NGINX_BIN} -c {NGINX_CONF}")
-            else:
-                logger.error("1. systemctl restart nginx")
-                logger.error("2. service nginx restart")
-                logger.error(f"3. nginx -c {NGINX_CONF} -s reload")
-    except subprocess.CalledProcessError:
-        logger.error("Nginx配置测试失败，请手动检查配置")
-        sys.exit(1)
+        logger.info("ModSecurity编译安装成功")
+        return True
+    except Exception as e:
+        logger.error(f"ModSecurity编译过程发生异常: {e}")
+        return False
 
+def download_nginx_source(version):
+    """下载特定版本的Nginx源代码
+    
+    Args:
+        version (str): Nginx版本号
+        
+    Returns:
+        str: Nginx源代码目录路径，失败返回空字符串
+    """
+    logger.info(f"下载Nginx v{version} 源代码...")
+    
+    # 创建下载目录
+    build_dir = DEFAULT_BUILD_DIR
+    nginx_src_dir = os.path.join(build_dir, f"nginx-{version}")
+    
+    # 如果目录已存在，跳过下载
+    if os.path.exists(nginx_src_dir):
+        logger.info(f"Nginx源代码已存在于 {nginx_src_dir}，跳过下载")
+        return nginx_src_dir
+    
+    # 下载源代码包
+    nginx_tar = os.path.join(build_dir, f"nginx-{version}.tar.gz")
+    download_url = f"https://nginx.org/download/nginx-{version}.tar.gz"
+    
+    try:
+        # 下载命令
+        if shutil.which("wget"):
+            cmd = f"wget -q {download_url} -O {nginx_tar}"
+        elif shutil.which("curl"):
+            cmd = f"curl -s -L {download_url} -o {nginx_tar}"
+        else:
+            logger.error("系统中未找到wget或curl下载工具")
+            return ""
+        
+        subprocess.run(cmd, shell=True, check=True)
+        
+        # 解压源代码
+        extract_cmd = f"tar -xzf {nginx_tar} -C {build_dir}"
+        subprocess.run(extract_cmd, shell=True, check=True)
+        
+        # 验证解压结果
+        if not os.path.exists(nginx_src_dir):
+            logger.error(f"Nginx源代码解压后不存在: {nginx_src_dir}")
+            return ""
+        
+        logger.info(f"Nginx源代码下载并解压到 {nginx_src_dir}")
+        return nginx_src_dir
+    except Exception as e:
+        logger.error(f"下载Nginx源代码时出错: {e}")
+        return ""
+
+def compile_dynamic_module(nginx_src_dir, connector_dir, configure_args):
+    """编译ModSecurity动态模块
+    
+    Args:
+        nginx_src_dir (str): Nginx源代码目录
+        connector_dir (str): ModSecurity-Nginx连接器目录
+        configure_args (str): Nginx的原始配置参数
+        
+    Returns:
+        bool: 编译是否成功
+    """
+    logger.info("开始编译ModSecurity-Nginx动态模块...")
+    
+    try:
+        # 进入Nginx源代码目录
+        os.chdir(nginx_src_dir)
+        
+        # 解析原始的configure参数，去除--prefix和--add-dynamic-module
+        args = configure_args.split()
+        filtered_args = []
+        skip_next = False
+        
+        for arg in args:
+            if skip_next:
+                skip_next = False
+                continue
+                
+            if arg.startswith('--prefix=') or arg.startswith('--add-dynamic-module'):
+                continue
+            elif arg == '--prefix' or arg == '--add-dynamic-module':
+                skip_next = True
+                continue
+            
+            filtered_args.append(arg)
+        
+        # 添加ModSecurity模块
+        filtered_args.append(f"--add-dynamic-module={connector_dir}")
+        
+        # 构建新的configure命令
+        new_configure_cmd = "./configure " + " ".join(filtered_args)
+        
+        # 执行配置和编译
+        logger.info(f"配置Nginx动态模块: {new_configure_cmd}")
+        process = subprocess.run(new_configure_cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        
+        if process.returncode != 0:
+            logger.error(f"配置Nginx模块失败: {process.stderr}")
+            return False
+        
+        # 构建模块（只编译模块而不是整个Nginx）
+        logger.info("编译ModSecurity动态模块...")
+        make_cmd = "make modules"
+        process = subprocess.run(make_cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        
+        if process.returncode != 0:
+            logger.error(f"编译模块失败: {process.stderr}")
+            return False
+        
+        # 检查模块是否成功创建
+        module_path = os.path.join(nginx_src_dir, "objs/ngx_http_modsecurity_module.so")
+        if not os.path.exists(module_path):
+            logger.error(f"编译后的模块文件不存在: {module_path}")
+            return False
+            
+        logger.info(f"ModSecurity动态模块成功编译: {module_path}")
+        return True
+    except Exception as e:
+        logger.error(f"编译ModSecurity-Nginx模块时出错: {e}")
+        return False
+
+def install_modsecurity_nginx(modsec_dir, force_update=False, bt_env=False):
+    """安装ModSecurity-Nginx模块
+    
+    Args:
+        modsec_dir (str): ModSecurity源代码目录
+        force_update (bool): 是否强制更新
+        bt_env (bool): 是否为宝塔环境
+        
+    Returns:
+        bool: 安装是否成功
+    """
+    logger.info("开始编译安装ModSecurity-Nginx模块...")
+    
+    # 获取Nginx信息
+    nginx_version, configure_args, nginx_binary = get_nginx_info(bt_env)
+    if not nginx_version:
+        logger.error("无法获取Nginx版本和编译参数，请确保Nginx已安装")
+        return False
+    
+    logger.info(f"Nginx版本: {nginx_version}, 二进制路径: {nginx_binary}")
+    
+    # 确定模块目录和模块文件路径
+    modules_dir = BT_MODULES_DIR if bt_env else STD_MODULES_DIR
+    module_path = os.path.join(modules_dir, "ngx_http_modsecurity_module.so")
+    os.makedirs(modules_dir, exist_ok=True)
+    
+    # 如果模块已存在且非强制更新，跳过
+    if os.path.exists(module_path) and not force_update:
+        logger.info(f"ModSecurity模块已存在于 {module_path}，跳过编译")
+        return True
+    elif os.path.exists(module_path) and force_update:
+        logger.info(f"强制更新模式，删除现有模块: {module_path}")
+        os.remove(module_path)
+    
+    # 获取Nginx源码
+    nginx_src_dir = download_nginx_source(nginx_version)
+    if not nginx_src_dir:
+        logger.error("下载Nginx源码失败")
+        return False
+    
+    # 获取ModSecurity-Nginx连接器路径
+    connector_dir = os.path.join(DEFAULT_BUILD_DIR, "ModSecurity-nginx")
+    if not os.path.exists(connector_dir):
+        logger.error(f"ModSecurity-Nginx连接器目录不存在: {connector_dir}")
+        return False
+    
+    # 创建动态模块
+    if not compile_dynamic_module(nginx_src_dir, connector_dir, configure_args):
+        logger.error("编译ModSecurity-Nginx动态模块失败")
+        return False
+    
+    # 复制模块到最终位置
+    objs_module_path = os.path.join(nginx_src_dir, "objs/ngx_http_modsecurity_module.so")
+    if not os.path.exists(objs_module_path):
+        logger.error(f"编译后的模块文件不存在: {objs_module_path}")
+        return False
+    
+    shutil.copy2(objs_module_path, module_path)
+    logger.info(f"ModSecurity模块成功安装到: {module_path}")
+    
+    # 创建 ModSecurity 配置目录
+    modsec_conf_dir = BT_MODSEC_DIR if bt_env else STD_MODSEC_DIR
+    if not os.path.exists(modsec_conf_dir):
+        os.makedirs(modsec_conf_dir, exist_ok=True)
+    
+    # 配置ModSecurity
+    modsec_recommended_file = os.path.join(modsec_dir, "modsecurity.conf-recommended")
+    if os.path.exists(modsec_recommended_file):
+        shutil.copy2(modsec_recommended_file, os.path.join(modsec_conf_dir, "modsecurity.conf"))
+    
+    unicode_map_file = os.path.join(modsec_dir, "unicode.mapping")
+    if os.path.exists(unicode_map_file):
+        shutil.copy2(unicode_map_file, os.path.join(modsec_conf_dir, "unicode.mapping"))
+    
+    # 创建基础配置文件
+    create_modsecurity_main_config(modsec_conf_dir)
+    
+    # 安装OWASP CRS规则集
+    crs_dir = BT_CRS_DIR if bt_env else STD_CRS_DIR
+    install_owasp_crs(crs_dir)
+    
+    # 修改Nginx配置加载ModSecurity模块
+    update_nginx_config_for_modsecurity(bt_env, module_path, modsec_conf_dir)
+    
+    # 测试Nginx配置
+    if not test_nginx_config(bt_env):
+        logger.error("修改后的Nginx配置无效，回滚中...")
+        # 此处可以添加回滚逻辑
+        return False
+    
+    # 重启Nginx
+    if not restart_nginx(bt_env):
+        logger.error("Nginx重启失败，请手动检查配置并重启")
+        return False
+    
+    logger.info("ModSecurity-Nginx模块安装成功")
+    return True
+
+def create_modsecurity_main_config(modsec_conf_dir):
+    """创建ModSecurity的主配置文件
+    
+    Args:
+        modsec_conf_dir (str): ModSecurity配置目录
+    """
+    logger.info("创建ModSecurity主配置文件...")
+    main_conf_file = os.path.join(modsec_conf_dir, "main.conf")
+    
+    with open(main_conf_file, 'w') as f:
+        f.write("# ModSecurity main configuration\n")
+        f.write("Include \"modsecurity.conf\"\n")
+        f.write("# -- Rule engine initialization ----------------------------------------------\n\n")
+        f.write("# Enable ModSecurity, attaching it to every transaction. Use detection\n")
+        f.write("# only to start with, because that minimises the chances of post-installation\n")
+        f.write("# disruption.\n")
+        f.write("SecRuleEngine On\n\n")
+        f.write("# -- Request body handling ---------------------------------------------------\n\n")
+        f.write("# Allow ModSecurity to access request bodies. If you don't, ModSecurity\n")
+        f.write("# won't be able to see any POST parameters, which opens a large security\n")
+        f.write("# hole for attackers to exploit.\n")
+        f.write("SecRequestBodyAccess On\n\n")
+        f.write("# Maximum request body size we will accept for buffering\n")
+        f.write("SecRequestBodyLimit 13107200\n")
+        f.write("# Maximum request body size we will accept for buffering\n")
+        f.write("SecRequestBodyNoFilesLimit 131072\n\n")
+        f.write("# Include OWASP CRS rules if available\n")
+        f.write("Include /etc/nginx/modsecurity/owasp-crs/crs-setup.conf\n")
+        f.write("Include /etc/nginx/modsecurity/owasp-crs/rules/*.conf\n")
+    
+    logger.info(f"创建了ModSecurity主配置文件: {main_conf_file}")
+
+def install_owasp_crs(crs_dir):
+    """安装OWASP ModSecurity核心规则集(CRS)
+    
+    Args:
+        crs_dir (str): CRS规则集目录
+        
+    Returns:
+        bool: 安装是否成功
+    """
+    logger.info("安装OWASP ModSecurity核心规则集...")
+    
+    # 创建目录
+    if not os.path.exists(crs_dir):
+        os.makedirs(crs_dir, exist_ok=True)
+    
+    # 检查规则集源代码是否已下载
+    source_crs_dir = os.path.join(DEFAULT_BUILD_DIR, "owasp-modsecurity-crs")
+    if not os.path.exists(source_crs_dir):
+        logger.warning(f"OWASP CRS源代码目录不存在: {source_crs_dir}")
+        return False
+    
+    try:
+        # 复制所有CRS文件
+        # 1. 复制配置文件
+        crs_setup_example = os.path.join(source_crs_dir, "crs-setup.conf.example")
+        if os.path.exists(crs_setup_example):
+            shutil.copy2(crs_setup_example, os.path.join(crs_dir, "crs-setup.conf"))
+        
+        # 2. 复制规则目录
+        rules_dir = os.path.join(source_crs_dir, "rules")
+        target_rules_dir = os.path.join(crs_dir, "rules")
+        
+        if os.path.exists(target_rules_dir):
+            shutil.rmtree(target_rules_dir)
+        
+        if os.path.exists(rules_dir):
+            shutil.copytree(rules_dir, target_rules_dir)
+        
+        logger.info(f"OWASP CRS规则集已安装到 {crs_dir}")
+        return True
+    except Exception as e:
+        logger.error(f"安装OWASP CRS规则集时出错: {e}")
+        return False
+
+def update_nginx_config_for_modsecurity(bt_env, module_path, modsec_conf_dir):
+    """更新Nginx配置以加载ModSecurity模块
+    
+    Args:
+        bt_env (bool): 是否为宝塔环境
+        module_path (str): ModSecurity模块路径
+        modsec_conf_dir (str): ModSecurity配置目录
+        
+    Returns:
+        bool: 更新是否成功
+    """
+    logger.info("更新Nginx配置以加载ModSecurity模块...")
+    
+    # 确定Nginx配置目录
+    nginx_conf_dir = BT_NGINX_CONF_DIR if bt_env else STD_NGINX_CONF_DIR
+    
+    # 创建ModSecurity模块配置文件
+    modsec_module_conf = os.path.join(nginx_conf_dir, "modules/modsecurity.conf")
+    
+    # 确保模块目录存在
+    os.makedirs(os.path.dirname(modsec_module_conf), exist_ok=True)
+    
+    try:
+        # 写入模块加载配置
+        with open(modsec_module_conf, 'w') as f:
+            f.write(f"load_module {module_path};\n")
+        
+        logger.info(f"创建了ModSecurity模块加载配置: {modsec_module_conf}")
+        
+        # 创建或更新modsecurity.conf包含文件
+        modsec_include_conf = os.path.join(nginx_conf_dir, "conf.d/modsecurity.conf")
+        os.makedirs(os.path.dirname(modsec_include_conf), exist_ok=True)
+        
+        with open(modsec_include_conf, 'w') as f:
+            f.write("# ModSecurity configuration\n")
+            f.write("modsecurity on;\n")
+            f.write(f"modsecurity_rules_file {os.path.join(modsec_conf_dir, 'main.conf')};\n")
+        
+        logger.info(f"创建了ModSecurity规则加载配置: {modsec_include_conf}")
+        
+        # 在http块中包含模块配置
+        main_nginx_conf = os.path.join(nginx_conf_dir, "nginx.conf")
+        
+        if os.path.exists(main_nginx_conf):
+            # 读取当前配置
+            with open(main_nginx_conf, 'r') as f:
+                content = f.read()
+            
+            # 如果已存在modsecurity.conf包含指令，跳过
+            if "include modules/modsecurity.conf;" in content and "include conf.d/modsecurity.conf;" in content:
+                logger.info("Nginx配置文件已包含ModSecurity配置，跳过更新")
+                return True
+            
+            # 备份原始配置
+            backup_file = main_nginx_conf + ".bak"
+            shutil.copy2(main_nginx_conf, backup_file)
+            logger.info(f"已备份Nginx配置文件到 {backup_file}")
+            
+            # 添加include指令到http块的开头
+            pattern = re.compile(r'(\s*http\s*{)', re.MULTILINE)
+            new_content = pattern.sub(r'\1\n    include modules/modsecurity.conf;\n    include conf.d/modsecurity.conf;', content, count=1)
+            
+            # 写回文件
+            with open(main_nginx_conf, 'w') as f:
+                f.write(new_content)
+            
+            logger.info(f"成功更新Nginx主配置文件: {main_nginx_conf}")
+        else:
+            logger.error(f"Nginx主配置文件不存在: {main_nginx_conf}")
+            return False
+        
+        return True
+    except Exception as e:
+        logger.error(f"更新Nginx配置文件时出错: {e}")
+        return False
+
+def test_nginx_config(bt_env):
+    """测试Nginx配置是否有效
+    
+    Args:
+        bt_env (bool): 是否为宝塔环境
+        
+    Returns:
+        bool: 配置是否有效
+    """
+    logger.info("测试Nginx配置...")
+    
+    try:
+        nginx_binary = BT_NGINX_BINARY if bt_env else STD_NGINX_BINARY
+        
+        cmd = f"{nginx_binary} -t"
+        process = subprocess.run(cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        
+        if process.returncode == 0:
+            logger.info("Nginx配置测试通过")
+            return True
+        else:
+            logger.error(f"Nginx配置测试失败: {process.stderr}")
+            return False
+    except Exception as e:
+        logger.error(f"测试Nginx配置时出错: {e}")
+        return False
+
+def restart_nginx(bt_env):
+    """重启Nginx服务
+    
+    Args:
+        bt_env (bool): 是否为宝塔环境
+        
+    Returns:
+        bool: 重启是否成功
+    """
+    logger.info("重启Nginx服务...")
+    
+    try:
+        if bt_env:
+            # 宝塔环境使用宝塔的重启脚本
+            cmd = "bt nginx restart"
+        else:
+            # 标准环境使用systemctl或service
+            if os.path.exists("/bin/systemctl") or os.path.exists("/usr/bin/systemctl"):
+                cmd = "systemctl restart nginx"
+            else:
+                cmd = "service nginx restart"
+        
+        process = subprocess.run(cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        
+        if process.returncode == 0:
+            logger.info("Nginx成功重启")
+            return True
+        else:
+            logger.error(f"Nginx重启失败: {process.stderr}")
+            return False
+    except Exception as e:
+        logger.error(f"重启Nginx时出错: {e}")
+        return False
+
+def get_nginx_info(bt_env=False):
+    """获取Nginx版本和编译信息
+    
+    Args:
+        bt_env (bool, optional): 是否为宝塔环境
+    
+    Returns:
+        tuple: (nginx_version, configure_args, nginx_binary)
+    """
+    logger.info("获取Nginx版本和编译信息...")
+    
+    try:
+        # 确定Nginx二进制文件路径
+        nginx_binary = BT_NGINX_BINARY if bt_env else STD_NGINX_BINARY
+        
+        # 检查Nginx是否安装
+        if not os.path.exists(nginx_binary):
+            logger.error(f"Nginx二进制文件不存在: {nginx_binary}")
+            return None, None, None
+        
+        # 获取Nginx版本
+        version_cmd = f"{nginx_binary} -v"
+        process = subprocess.run(version_cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        
+        # 解析版本输出（通常在stderr中）
+        version_output = process.stderr if process.stderr else process.stdout
+        version_match = re.search(r'nginx/(\d+\.\d+\.\d+)', version_output)
+        
+        if not version_match:
+            logger.error(f"无法解析Nginx版本: {version_output}")
+            return None, None, None
+        
+        nginx_version = version_match.group(1)
+        logger.info(f"检测到Nginx版本: {nginx_version}")
+        
+        # 获取编译参数
+        if bt_env:
+            # 宝塔环境的编译参数可能存储在特定位置
+            nginx_configure_path = "/www/server/nginx/src/configure.txt"
+            if os.path.exists(nginx_configure_path):
+                with open(nginx_configure_path, 'r') as f:
+                    configure_args = f.read().strip()
+            else:
+                # 如果找不到配置文件，则尝试使用编译信息获取
+                configure_cmd = f"{nginx_binary} -V"
+                process = subprocess.run(configure_cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+                configure_output = process.stderr if process.stderr else process.stdout
+                configure_match = re.search(r'configure arguments:\s*(.*)', configure_output)
+                
+                if configure_match:
+                    configure_args = configure_match.group(1)
+                else:
+                    logger.error(f"无法获取Nginx编译参数: {configure_output}")
+                    return nginx_version, "", nginx_binary
+        else:
+            # 标准环境直接获取编译信息
+            configure_cmd = f"{nginx_binary} -V"
+            process = subprocess.run(configure_cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+            configure_output = process.stderr if process.stderr else process.stdout
+            configure_match = re.search(r'configure arguments:\s*(.*)', configure_output)
+            
+            if configure_match:
+                configure_args = configure_match.group(1)
+            else:
+                logger.error(f"无法获取Nginx编译参数: {configure_output}")
+                return nginx_version, "", nginx_binary
+        
+        logger.info(f"获取到Nginx编译参数: {configure_args[:80]}...")
+        return nginx_version, configure_args, nginx_binary
+    
+    except Exception as e:
+        logger.error(f"获取Nginx信息时出错: {e}")
+        return None, None, None
+
+#############################################################
 # 主函数
-def main(force_update=False, skip_deps=False):
-    """主函数
+#############################################################
+
+def main(force_update=False, skip_deps=False, verbose=False):
+    """主函数：安装和配置ModSecurity
     
     Args:
         force_update (bool, optional): 强制更新ModSecurity模块，即使已存在也会重新编译。默认为False。
         skip_deps (bool, optional): 是否跳过依赖安装。当系统无法连接到网络时可以使用此选项。默认为False。
+        verbose (bool, optional): 是否显示详细日志。默认为False。
+    
+    Returns:
+        bool: 安装是否成功
     """
+    if verbose:
+        logger.setLevel(logging.DEBUG)
+    
+    # 检查是否为root用户
+    if os.geteuid() != 0:
+        logger.error("此脚本需要root权限运行")
+        return False
+    
+    # 检测是否为宝塔面板环境
+    bt_env = os.path.exists("/www/server/panel/")
+    if bt_env:
+        logger.info("检测到宝塔面板环境，将使用宝塔路径")
+    
     try:
-        # 检查是否为root用户
-        if os.geteuid() != 0:
-            logger.error("此脚本需要以root权限运行")
-            sys.exit(1)
+        # 预检查软件源配置（仅针对RHEL/CentOS系统）
+        os_type, os_version = detect_os()
+        if os_type == "rhel":
+            logger.info("执行软件源预检查...")
+            check_and_fix_repo_config(os_version)
         
-        # 创建构建目录
-        os.makedirs(BUILD_DIR, exist_ok=True)
+        # 初始化仓库缓存
+        init_repo_cache()
         
-        # 修复CentOS的YUM镜像源问题
-        if DISTRO_FAMILY == 'rhel' and not skip_deps:
-            try:
-                logger.info("检测到CentOS/RHEL系统，尝试修复YUM镜像源...")
-                if not fix_centos_yum_mirrors():
-                    logger.warning("YUM镜像源修复失败，可能会导致依赖安装问题")
-                    # 询问用户是否继续
-                    logger.warning("请手动配置YUM源后重试，或使用--skip-deps参数跳过依赖安装")
-                    sys.exit(1)
-            except Exception as e:
-                logger.error(f"修复YUM镜像源时出错: {e}")
-                logger.warning("将尝试使用原始YUM源配置继续")
-        
-        # 安装依赖（除非被要求跳过）
-        if skip_deps:
-            logger.warning("根据用户请求跳过依赖安装，请确保系统已安装了所有必要的开发包")
+        # 安装系统依赖
+        if not skip_deps:
+            logger.info("开始安装系统依赖...")
+            if not install_dependencies(bt_env):
+                logger.warning("系统依赖安装失败，尝试使用备选方法安装关键依赖...")
+                if os_type == "rhel":
+                    # 对于CentOS 7 EOL系统，尝试直接RPM安装
+                    if not install_direct_rpm_dependencies():
+                        logger.error("所有尝试安装依赖的方法都失败了")
+                        return False
+                else:
+                    logger.error("无法安装系统依赖，请手动安装必要的开发工具后重试")
+                    return False
         else:
-            try:
-                install_dependencies()
-            except Exception as e:
-                logger.error(f"依赖安装遇到问题: {e}")
-                if "Could not resolve host" in str(e) or "Failed to connect" in str(e) or "Unable to establish connection" in str(e) or "Cannot find a valid baseurl" in str(e) or "Could not retrieve mirrorlist" in str(e):
-                    logger.error("检测到网络连接或YUM源问题，可能是DNS解析失败、网络不可用或镜像源配置错误")
-                    logger.error("如果您确定系统已经安装了所有必要的依赖，可以使用 --skip-deps 参数重新运行脚本")
-                    logger.error("或者尝试手动配置YUM镜像源后再次运行脚本")
-                    
-                    # 提供必要的依赖列表供用户参考
-                    if DISTRO_FAMILY == 'rhel':
-                        logger.info("\n您需要手动安装以下依赖包:\n  - gcc\n  - gcc-c++\n  - make\n  - automake\n  - autoconf\n  - libtool\n  - pcre-devel\n  - libxml2-devel\n  - curl-devel\n  - openssl-devel\n  - zlib-devel\n  - geoip-devel\n  - yajl-devel")
-                    
-                    sys.exit(1)
-                logger.warning("提示: 依赖安装失败，将尝试继续安装流程，但可能会在后续步骤中失败")
+            logger.info("跳过依赖安装")
         
         # 下载和编译ModSecurity
-        download_modsecurity(force_update)
+        logger.info("开始下载和编译ModSecurity...")
+        success, modsec_dir = download_modsecurity(force_update)
+        if not success:
+            logger.error("下载和编译ModSecurity失败")
+            return False
         
-        # 安装ModSecurity-nginx
-        install_modsecurity_nginx(force_update)
+        # 安装ModSecurity-Nginx模块
+        logger.info("开始安装ModSecurity-Nginx模块...")
+        if not install_modsecurity_nginx(modsec_dir, force_update, bt_env):
+            logger.error("安装ModSecurity-Nginx模块失败")
+            return False
         
-        # 下载CRS规则
-        download_owasp_crs()
-        
-        # 配置ModSecurity
-        configure_modsecurity()
-        
-        logger.info("ModSecurity安装完成!")
-        logger.info(f"详细日志请查看: {log_file}")
-        
+        logger.info("ModSecurity安装成功！")
+        logger.info("现在您可以通过修改/etc/nginx/modsecurity/main.conf来配置ModSecurity规则")
+        return True
+    
     except Exception as e:
-        logger.error(f"安装过程中发生错误: {e}")
-        sys.exit(1)
-    finally:
-        # 清理临时文件
-        logger.info("清理临时文件...")
-        if os.path.exists(BUILD_DIR):
-            shutil.rmtree(BUILD_DIR)
-
-def parse_args():
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser(description='ModSecurity安装脚本')
-    parser.add_argument('-f', '--force', action='store_true', help='强制重新编译ModSecurity模块，即使已存在也会更新')
-    parser.add_argument('-v', '--verbose', action='store_true', help='显示详细的安装过程信息')
-    parser.add_argument('-s', '--skip-deps', action='store_true', help='跳过依赖安装，适用于无法连接到网络的环境')
-    return parser.parse_args()
+        logger.error(f"安装过程中发生异常: {e}")
+        return False
 
 if __name__ == "__main__":
-    args = parse_args()
-    # 如果指定了详细模式，设置日志级别为DEBUG
-    if args.verbose:
-        logger.setLevel(logging.DEBUG)
-        
-    main(force_update=args.force, skip_deps=args.skip_deps)
+    # 设置参数解析
+    parser = argparse.ArgumentParser(description="ModSecurity安装脚本")
+    parser.add_argument("-f", "--force", action="store_true", help="强制更新ModSecurity模块，即使已存在也会重新编译")
+    parser.add_argument("--skip-deps", action="store_true", help="跳过依赖安装，当系统无法连接到网络时可以使用此选项")
+    parser.add_argument("-v", "--verbose", action="store_true", help="显示详细的安装过程信息")
+    args = parser.parse_args()
+    
+    # 运行主函数
+    success = main(force_update=args.force, skip_deps=args.skip_deps, verbose=args.verbose)
+    
+    # 根据安装结果设置退出码
+    sys.exit(0 if success else 1)
