@@ -1,10 +1,10 @@
 #!/bin/bash
-# ModSecurity 一键安装脚本
+# ModSecurity 一键安装脚本 - 模块化版本
 # 使用方法: curl -sSL https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity/install_modsecurity.sh | sudo sh
 
 set -e
 
-echo "ModSecurity - 一键安装版"
+echo "ModSecurity - 模块化一键安装版"
 
 # 检查权限
 if [ "$(id -u)" != "0" ]; then
@@ -14,39 +14,78 @@ if [ "$(id -u)" != "0" ]; then
 fi
 
 # 创建临时目录
-TEMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TEMP_DIR"' EXIT
+INSTALL_DIR=$(mktemp -d)
+trap 'rm -rf "$INSTALL_DIR"' EXIT
 
-# 下载脚本
-echo "正在下载安装脚本..."
+echo "使用临时目录: $INSTALL_DIR"
 
-# 尝试不同的备选下载源
-download_success=false
+# 创建模块目录结构
+mkdir -p "$INSTALL_DIR/modules"
 
-# 尝试主要下载源（Gitee - 国内速度更快）
-echo "尝试下载源 1/3: Gitee..."
-curl -m 30 -sSL https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity/install_modsecurity.py -o "$TEMP_DIR/install_modsecurity.py" && download_success=true
+# 下载主脚本和模块
+echo "正在下载安装脚本和模块..."
 
-# 如果失败，尝试JSDelivr CDN
-if [ "$download_success" != "true" ]; then
-    echo "下载失败，尝试备用源 2/3: JSDelivr CDN..."
-    curl -m 30 -sSL https://cdn.jsdelivr.net/gh/supine-win/php_security_scan@main/modsecurity/install_modsecurity.py -o "$TEMP_DIR/install_modsecurity.py" && download_success=true
-fi
+# 定义文件列表
+FILES=(
+    "install.py"
+    "modules/__init__.py"
+    "modules/constants.py"
+    "modules/system_detector.py"
+    "modules/repo_manager.py"
+    "modules/repo_manager_ext.py"
+    "modules/dependency_installer.py"
+    "modules/modsecurity_compiler.py"
+    "modules/nginx_integrator.py"
+    "modules/config_manager.py"
+)
 
-# 如果仍然失败，尝试GitHub源
-if [ "$download_success" != "true" ]; then
-    echo "下载失败，尝试备用源 3/3: GitHub..."
-    curl -m 30 -sSL https://raw.githubusercontent.com/supine-win/php_security_scan/main/modsecurity/install_modsecurity.py -o "$TEMP_DIR/install_modsecurity.py" && download_success=true
-fi
+# 下载源选项
+DOWNLOAD_SOURCES=(
+    "https://gitee.com/supine-win/php_security_scan/raw/main/modsecurity" # Gitee (国内速度快)
+    "https://cdn.jsdelivr.net/gh/supine-win/php_security_scan@main/modsecurity" # JSDelivr CDN
+    "https://raw.githubusercontent.com/supine-win/php_security_scan/main/modsecurity" # GitHub
+)
 
-# 检查下载是否成功
-if [ "$download_success" != "true" ]; then
-    echo "错误: 无法下载安装脚本。请检查您的网络连接或手动下载脚本。"
+download_file() {
+    local file=$1
+    local success=false
+    
+    for source in "${DOWNLOAD_SOURCES[@]}"; do
+        echo "尝试从 $source 下载 $file..."
+        local target_dir=$(dirname "$INSTALL_DIR/$file")
+        mkdir -p "$target_dir"
+        
+        if curl -m 30 -sSL "$source/$file" -o "$INSTALL_DIR/$file" 2>/dev/null; then
+            echo "✅ 成功下载: $file"
+            success=true
+            break
+        else
+            echo "❌ 从 $source 下载 $file 失败"
+        fi
+    done
+    
+    return $([ "$success" = true ] && echo 0 || echo 1)
+}
+
+# 下载所有文件
+download_failed=false
+
+for file in "${FILES[@]}"; do
+    if ! download_file "$file"; then
+        download_failed=true
+        echo "⚠️ 警告: 无法下载 $file"
+    fi
+done
+
+# 检查关键文件是否下载成功
+if [ ! -f "$INSTALL_DIR/install.py" ] || [ ! -f "$INSTALL_DIR/modules/constants.py" ]; then
+    echo "错误: 无法下载关键安装文件。请检查您的网络连接或手动下载。"
     echo "您可以直接访问 https://gitee.com/supine-win/php_security_scan 或 https://github.com/supine-win/php_security_scan 下载完整代码。"
     exit 1
 fi
 
-chmod +x "$TEMP_DIR/install_modsecurity.py"
+# 设置执行权限
+chmod +x "$INSTALL_DIR/install.py"
 
 # 检查Python3是否安装
 if ! command -v python3 &> /dev/null; then
@@ -73,7 +112,7 @@ fi
 
 # 检查必要的其他依赖
 # 检查Git
- if ! command -v git &> /dev/null; then
+if ! command -v git &> /dev/null; then
     echo "检测到系统中没有Git，正在尝试安装..."
     
     if command -v apt-get &> /dev/null; then
@@ -87,32 +126,66 @@ fi
     fi
 fi
 
+# 检查其他基本工具
+if ! command -v curl &> /dev/null; then
+    echo "检测到系统中没有curl，正在尝试安装..."
+    
+    if command -v apt-get &> /dev/null; then
+        apt-get update && apt-get install -y curl
+    elif command -v yum &> /dev/null; then
+        yum install -y curl
+    elif command -v dnf &> /dev/null; then
+        dnf install -y curl
+    else
+        echo "警告: 无法自动安装curl。脚本可能会失败。"
+    fi
+fi
+
+# 创建日志目录
+LOG_DIR="/var/log/modsecurity_installer"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/install_$(date +%Y%m%d%H%M%S).log"
+
 # 开始安装
 echo "开始安装ModSecurity..."
-
-# 检查必要的其他依赖包
-echo "检查并安装必要的依赖包..."
+echo "日志文件将保存在: $LOG_FILE"
 
 # 执行Python脚本
 echo "开始执行安装..."
 
 # 将命令行参数传递给Python脚本
 echo "命令行参数: $@"
-python3 "$TEMP_DIR/install_modsecurity.py" "$@"
+cd "$INSTALL_DIR"
+python3 "$INSTALL_DIR/install.py" --log-file="$LOG_FILE" "$@"
 
 # 检查执行结果
 if [ $? -eq 0 ]; then
     echo "✅ ModSecurity安装完成!"
-    echo "请查看 $TEMP_DIR/modsecurity_install.log 了解详细日志信息。"
+    echo "详细日志文件: $LOG_FILE"
     echo "
 您可能需要重新启动Nginx服务器以应用更改:"
     echo "  systemctl restart nginx"
     echo "
 或者检查您的Nginx配置:"
     echo "  nginx -t"
+    echo "
+默认规则已配置，包括:"
+    echo "- SQL注入防护"
+    echo "- XSS防护"
+    echo "- 命令注入防护"
+    echo "- 文件包含防护"
+    echo "- PHP安全规则"
+    echo "
+配置文件位置:"
+    echo "- 主配置: /etc/nginx/modsec/main.conf"
+    echo "- 规则目录: /etc/nginx/modsec/rules/"
+    echo "
+宝塔面板环境配置文件位置:"
+    echo "- 主配置: /www/server/nginx/conf/modsec/main.conf"
+    echo "- 规则目录: /www/server/nginx/conf/modsec/rules/"
 else
     echo "⚠️ ModSecurity安装过程中出现错误。"
-    echo "请查看 $TEMP_DIR/modsecurity_install.log 了解详细日志信息。"
+    echo "请查看日志文件: $LOG_FILE"
     echo "或者访问 https://gitee.com/supine-win/php_security_scan 获取帮助。"
     exit 1
 fi
