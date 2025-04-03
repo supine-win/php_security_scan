@@ -169,6 +169,27 @@ def get_distro_family():
     else:
         return 'unknown'
 
+def detect_os():
+    """检测操作系统类型和版本号
+    
+    Returns:
+        tuple: (os_type, os_version)，os_type可能为'rhel'、'debian'或'unknown'，
+               os_version为版本号，如'7'或'8'
+    """
+    os_type = get_distro_family()
+    os_version = ''
+    
+    if os_type == 'rhel':
+        os_version = get_centos_version()
+    elif os_type == 'debian':
+        try:
+            with open('/etc/debian_version', 'r') as f:
+                os_version = f.read().strip()
+        except Exception as e:
+            logger.error(f"读取Debian版本信息失败: {e}")
+    
+    return os_type, os_version
+
 def get_nginx_info(bt_env=False):
     """获取Nginx版本和编译信息
     
@@ -415,6 +436,16 @@ def install_epel_repo():
 # 仓库管理功能
 #############################################################
 
+def init_repo_cache():
+    """初始化代码仓库缓存目录
+    
+    这是init_repos_cache的别名函数，保持与调用兼容
+    
+    Returns:
+        bool: 是否成功初始化
+    """
+    return init_repos_cache()
+
 def init_repos_cache(repos_cache=DEFAULT_REPOS_CACHE):
     """初始化代码仓库缓存目录
     
@@ -590,6 +621,32 @@ def download_file_with_fallback(urls, destination):
 # CentOS镜像源修复功能
 #############################################################
 
+def check_and_fix_repo_config(os_version):
+    """检查并修复软件源配置问题
+    
+    专门解决CentOS 7 EOL软件源错误，自动检测和修复镜像问题
+    
+    Args:
+        os_version (str): 操作系统版本号
+        
+    Returns:
+        bool: 是否成功修复配置
+    """
+    # 主要针对CentOS/RHEL系统
+    if not os.path.exists('/etc/yum.repos.d'):
+        logger.info("未检测到YUM软件源目录，跳过修复")
+        return True
+    
+    logger.info("检查YUM软件源配置...")
+    
+    # 测试软件源是否可用
+    if test_yum_repo():
+        logger.info("软件源配置正常，无需修复")
+        return True
+    
+    logger.warning("检测到软件源配置问题，尝试修复...")
+    return fix_centos_yum_mirrors()
+    
 def fix_centos_yum_mirrors():
     """修复CentOS的YUM镜像源问题
     
