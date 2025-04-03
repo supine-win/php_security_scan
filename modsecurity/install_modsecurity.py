@@ -120,6 +120,78 @@ def get_nginx_info(bt_env=False):
 DISTRO_FAMILY = get_distro_family()
 logger.info(f"检测到系统类型: {DISTRO_FAMILY}")
 
+# 检查GCC版本是否支持C++17
+def check_gcc_version():
+    """检查GCC版本是否支持C++17，如果不支持则尝试安装更高版本"""
+    try:
+        # 检查当前GCC版本
+        gcc_version_output = subprocess.check_output("gcc --version", shell=True, stderr=subprocess.STDOUT, universal_newlines=True)
+        # 提取版本号
+        version_match = re.search(r'\s(\d+\.\d+\.\d+)', gcc_version_output)
+        if version_match:
+            gcc_version = version_match.group(1)
+            logger.info(f"检测到GCC版本: {gcc_version}")
+            
+            # 转换为数字进行比较
+            major_version = int(gcc_version.split('.')[0])
+            
+            # GCC 7及以上版本支持C++17
+            if major_version >= 7:
+                logger.info("当前GCC版本支持C++17")
+                return True
+            else:
+                logger.warning(f"当前GCC版本 {gcc_version} 不完全支持C++17，ModSecurity需要GCC 7或更高版本")
+                return False
+        else:
+            logger.warning("无法确定GCC版本")
+            return False
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        logger.warning("系统上可能未安装GCC")
+        return False
+
+# 安装支持C++17的GCC版本
+def install_newer_gcc(distro_family):
+    """尝试安装支持C++17的更高版本GCC"""
+    logger.info("尝试安装支持C++17的GCC版本...")
+    
+    try:
+        if distro_family == 'debian':
+            # 对于Ubuntu/Debian，添加toolchain PPA
+            logger.info("为Ubuntu/Debian添加toolchain PPA...")
+            subprocess.run("apt update", shell=True, check=True)
+            subprocess.run("apt install -y software-properties-common", shell=True, check=True)
+            subprocess.run("add-apt-repository -y ppa:ubuntu-toolchain-r/test", shell=True, check=True)
+            subprocess.run("apt update", shell=True, check=True)
+            subprocess.run("apt install -y gcc-7 g++-7", shell=True, check=True)
+            # 设置GCC-7为默认版本
+            subprocess.run("update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-7 60 --slave /usr/bin/g++ g++ /usr/bin/g++-7", shell=True, check=True)
+            logger.info("已安装并设置GCC-7为默认版本")
+            return True
+        elif distro_family == 'rhel':
+            # 对于CentOS/RHEL，使用SCL或Devtoolset
+            logger.info("为CentOS/RHEL安装开发者工具集...")
+            if os.path.exists("/etc/centos-release"):
+                # CentOS
+                subprocess.run("yum install -y centos-release-scl", shell=True, check=True)
+                subprocess.run("yum install -y devtoolset-7-gcc devtoolset-7-gcc-c++", shell=True, check=True)
+                # 添加到环境变量
+                logger.info("添加devtoolset-7到环境...")
+                os.environ["PATH"] = "/opt/rh/devtoolset-7/root/usr/bin:" + os.environ["PATH"]
+                # 创建一个提示用户如何永久启用的消息
+                logger.info("\n要在当前会话中启用GCC 7，请运行: source scl_source enable devtoolset-7")
+                logger.info("要永久启用，请将以上命令添加到您的~/.bashrc文件中\n")
+                return True
+            else:
+                # 其他RHEL类系统
+                logger.warning("未能为您的RHEL系统找到适合的GCC 7安装方法")
+                return False
+        else:
+            logger.warning(f"不支持为 {distro_family} 系统自动安装更新的GCC")
+            return False
+    except subprocess.CalledProcessError as e:
+        logger.error(f"安装更新版本GCC失败: {e}")
+        return False
+
 def install_epel_repo():
     """安装EPEL仓库以提供额外的依赖包
     
@@ -764,6 +836,18 @@ def download_modsecurity(force_update=False):
         # 如果强制更新模式且模块存在
         if module_exists and force_update:
             logger.info(f"强制更新模式: 将重新编译ModSecurity模块")
+        
+        # 检查GCC版本是否支持C++17
+        gcc_supports_cpp17 = check_gcc_version()
+        if not gcc_supports_cpp17:
+            logger.warning("ModSecurity编译需要支持C++17的GCC 7或更高版本")
+            gcc_upgraded = install_newer_gcc(DISTRO_FAMILY)
+            if gcc_upgraded:
+                logger.info("成功安装支持C++17的GCC版本")
+            else:
+                logger.error("无法安装支持C++17的GCC版本，编译可能会失败")
+                logger.error("您可能需要手动安装GCC 7+或尝试使用预编译的ModSecurity模块")
+                logger.info("尝试继续编译，但可能会失败...")
             
         # 构建和编译
         logger.info("开始编译ModSecurity...")
