@@ -931,26 +931,26 @@ def generate_aliyun_eol_config(version, vault_version):
         return f"""# CentOS {version} - 阿里云镜像
 [base]
 name=CentOS-{version} - Base
-baseurl=[https://mirrors.aliyun.com/centos-vault/{vault_version}/os/$basearch/](https://mirrors.aliyun.com/centos-vault/{vault_version}/os/$basearch/)
+baseurl=https://mirrors.aliyun.com/centos-vault/{vault_version}/os/$basearch/
 gpgcheck=0
 enabled=1
 
 [updates]
 name=CentOS-{version} - Updates
-baseurl=[https://mirrors.aliyun.com/centos-vault/{vault_version}/updates/$basearch/](https://mirrors.aliyun.com/centos-vault/{vault_version}/updates/$basearch/)
+baseurl=https://mirrors.aliyun.com/centos-vault/{vault_version}/updates/$basearch/
 gpgcheck=0
 enabled=1
 
 [extras]
 name=CentOS-{version} - Extras
-baseurl=[https://mirrors.aliyun.com/centos-vault/{vault_version}/extras/$basearch/](https://mirrors.aliyun.com/centos-vault/{vault_version}/extras/$basearch/)
+baseurl=https://mirrors.aliyun.com/centos-vault/{vault_version}/extras/$basearch/
 gpgcheck=0
 enabled=1
 
 # EPEL仓库
 [epel]
 name=Extra Packages for Enterprise Linux {version}
-baseurl=[https://mirrors.aliyun.com/epel/{version}/$basearch](https://mirrors.aliyun.com/epel/{version}/$basearch)
+baseurl=https://mirrors.aliyun.com/epel/{version}/$basearch
 enabled=1
 gpgcheck=0
 """
@@ -958,26 +958,26 @@ gpgcheck=0
         return f"""# CentOS {version} - 阿里云镜像
 [base]
 name=CentOS-{version} - Base
-baseurl=[https://mirrors.aliyun.com/centos-vault/{vault_version}/BaseOS/$basearch/os/](https://mirrors.aliyun.com/centos-vault/{vault_version}/BaseOS/$basearch/os/)
+baseurl=https://mirrors.aliyun.com/centos-vault/{vault_version}/BaseOS/$basearch/os/
 gpgcheck=0
 enabled=1
 
 [appstream]
 name=CentOS-{version} - AppStream
-baseurl=[https://mirrors.aliyun.com/centos-vault/{vault_version}/AppStream/$basearch/os/](https://mirrors.aliyun.com/centos-vault/{vault_version}/AppStream/$basearch/os/)
+baseurl=https://mirrors.aliyun.com/centos-vault/{vault_version}/AppStream/$basearch/os/
 gpgcheck=0
 enabled=1
 
 [extras]
 name=CentOS-{version} - Extras
-baseurl=[https://mirrors.aliyun.com/centos-vault/{vault_version}/extras/$basearch/os/](https://mirrors.aliyun.com/centos-vault/{vault_version}/extras/$basearch/os/)
+baseurl=https://mirrors.aliyun.com/centos-vault/{vault_version}/extras/$basearch/os/
 gpgcheck=0
 enabled=1
 
 # EPEL仓库
 [epel]
 name=Extra Packages for Enterprise Linux {version}
-baseurl=[https://mirrors.aliyun.com/epel/{version}/Everything/$basearch](https://mirrors.aliyun.com/epel/{version}/Everything/$basearch)
+baseurl=https://mirrors.aliyun.com/epel/{version}/Everything/$basearch
 enabled=1
 gpgcheck=0
 """
@@ -996,26 +996,26 @@ def generate_tsinghua_eol_config(version, vault_version):
         return f"""# CentOS {version} - 清华镜像
 [base]
 name=CentOS-{version} - Base
-baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/os/$basearch/](https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/os/$basearch/)
+baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/os/$basearch/
 gpgcheck=0
 enabled=1
 
 [updates]
 name=CentOS-{version} - Updates
-baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/updates/$basearch/](https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/updates/$basearch/)
+baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/updates/$basearch/
 gpgcheck=0
 enabled=1
 
 [extras]
 name=CentOS-{version} - Extras
-baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/extras/$basearch/](https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/extras/$basearch/)
+baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/extras/$basearch/
 gpgcheck=0
 enabled=1
 
 # EPEL仓库
 [epel]
 name=Extra Packages for Enterprise Linux {version}
-baseurl=[https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/$basearch](https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/$basearch)
+baseurl=https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/$basearch
 enabled=1
 gpgcheck=0
 """
@@ -1023,26 +1023,26 @@ gpgcheck=0
         return f"""# CentOS {version} - 清华镜像
 [base]
 name=CentOS-{version} - Base
-baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/BaseOS/$basearch/os/](https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/BaseOS/$basearch/os/)
+baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/BaseOS/$basearch/os/
 gpgcheck=0
 enabled=1
 
 [appstream]
 name=CentOS-{version} - AppStream
-baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/AppStream/$basearch/os/](https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/AppStream/$basearch/os/)
+baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/AppStream/$basearch/os/
 gpgcheck=0
 enabled=1
 
 [extras]
 name=CentOS-{version} - Extras
-baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/extras/$basearch/os/](https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/extras/$basearch/os/)
+baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos-vault/{vault_version}/extras/$basearch/os/
 gpgcheck=0
 enabled=1
 
 # EPEL仓库
 [epel]
 name=Extra Packages for Enterprise Linux {version}
-baseurl=[https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/Everything/$basearch](https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/Everything/$basearch)
+baseurl=https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/Everything/$basearch
 enabled=1
 gpgcheck=0
 """
@@ -1059,26 +1059,26 @@ def generate_aliyun_standard_config(version):
     return f"""# CentOS {version} - 阿里云镜像
 [base]
 name=CentOS-{version} - Base
-baseurl=[https://mirrors.aliyun.com/centos/{version}/BaseOS/$basearch/os/](https://mirrors.aliyun.com/centos/{version}/BaseOS/$basearch/os/)
+baseurl=https://mirrors.aliyun.com/centos/{version}/BaseOS/$basearch/os/
 gpgcheck=0
 enabled=1
 
 [appstream]
 name=CentOS-{version} - AppStream
-baseurl=[https://mirrors.aliyun.com/centos/{version}/AppStream/$basearch/os/](https://mirrors.aliyun.com/centos/{version}/AppStream/$basearch/os/)
+baseurl=https://mirrors.aliyun.com/centos/{version}/AppStream/$basearch/os/
 gpgcheck=0
 enabled=1
 
 [extras]
 name=CentOS-{version} - Extras
-baseurl=[https://mirrors.aliyun.com/centos/{version}/extras/$basearch/os/](https://mirrors.aliyun.com/centos/{version}/extras/$basearch/os/)
+baseurl=https://mirrors.aliyun.com/centos/{version}/extras/$basearch/os/
 gpgcheck=0
 enabled=1
 
 # EPEL仓库
 [epel]
 name=Extra Packages for Enterprise Linux {version}
-baseurl=[https://mirrors.aliyun.com/epel/{version}/Everything/$basearch](https://mirrors.aliyun.com/epel/{version}/Everything/$basearch)
+baseurl=https://mirrors.aliyun.com/epel/{version}/Everything/$basearch
 enabled=1
 gpgcheck=0
 """
@@ -1095,26 +1095,26 @@ def generate_tsinghua_standard_config(version):
     return f"""# CentOS {version} - 清华镜像
 [base]
 name=CentOS-{version} - Base
-baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/BaseOS/$basearch/os/](https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/BaseOS/$basearch/os/)
+baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/BaseOS/$basearch/os/
 gpgcheck=0
 enabled=1
 
 [appstream]
 name=CentOS-{version} - AppStream
-baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/AppStream/$basearch/os/](https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/AppStream/$basearch/os/)
+baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/AppStream/$basearch/os/
 gpgcheck=0
 enabled=1
 
 [extras]
 name=CentOS-{version} - Extras
-baseurl=[https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/extras/$basearch/os/](https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/extras/$basearch/os/)
+baseurl=https://mirrors.tuna.tsinghua.edu.cn/centos/{version}/extras/$basearch/os/
 gpgcheck=0
 enabled=1
 
 # EPEL仓库
 [epel]
 name=Extra Packages for Enterprise Linux {version}
-baseurl=[https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/Everything/$basearch](https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/Everything/$basearch)
+baseurl=https://mirrors.tuna.tsinghua.edu.cn/epel/{version}/Everything/$basearch
 enabled=1
 gpgcheck=0
 """
