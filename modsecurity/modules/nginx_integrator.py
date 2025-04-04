@@ -10,13 +10,18 @@ import re
 import shutil
 import subprocess
 import logging
+import sys
 import time
 import tempfile
 from pathlib import Path
 
 # 导入相关模块
-from modules.constants import MODSEC_VERSION, MODSEC_CONNECTOR_VERSION, MODSEC_CONNECTOR_URL
-from modules.system_detector import get_nginx_info, detect_bt_panel
+try:
+    from modules.constants import MODSEC_VERSION, MODSEC_CONNECTOR_VERSION, MODSEC_CONNECTOR_URL
+    from modules.system_detector import get_nginx_info, detect_bt_panel
+except ImportError as e:
+    logging.error(f"导入模块时出错: {e}")
+    sys.exit(1)
 
 logger = logging.getLogger('modsecurity_installer')
 
@@ -33,20 +38,39 @@ def download_connector(build_dir):
     if not os.path.exists(build_dir):
         os.makedirs(build_dir)
     
-    # 下载连接器
-    connector_url = MODSEC_CONNECTOR_URL
+    # 连接器文件名
     connector_name = f"ModSecurity-nginx-v{MODSEC_CONNECTOR_VERSION}.tar.gz"
     connector_path = os.path.join(build_dir, connector_name)
     
+    # 如果文件已存在，不需要下载
     if os.path.exists(connector_path):
         logger.info(f"连接器已下载: {connector_path}")
     else:
-        logger.info(f"下载连接器: {connector_url}")
-        try:
-            cmd = f"curl -L --connect-timeout 30 --retry 3 -o {connector_path} {connector_url}"
-            subprocess.run(cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except subprocess.CalledProcessError as e:
-            logger.error(f"下载连接器失败: {e}")
+        # 定义下载URL优先级列表
+        download_urls = [
+            # 首选Gitee镜像
+            MODSEC_CONNECTOR_GITEE_URL,
+            # 备用GitHub地址
+            MODSEC_CONNECTOR_GITHUB_URL
+        ]
+        
+        # 依次尝试每个URL
+        download_success = False
+        for url in download_urls:
+            try:
+                logger.info(f"尝试从 {url} 下载连接器...")
+                cmd = f"curl -L --connect-timeout 30 --retry 3 -o {connector_path} {url}"
+                subprocess.run(cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                download_success = True
+                logger.info(f"下载连接器成功: {url}")
+                break
+            except subprocess.CalledProcessError as e:
+                logger.warning(f"从 {url} 下载连接器失败: {e}，尝试下一个URL")
+                continue
+        
+        # 如果所有URL都失败了
+        if not download_success:
+            logger.error(f"从所有源下载连接器均失败")
             return ""
     
     # 解压连接器
@@ -55,19 +79,65 @@ def download_connector(build_dir):
         logger.info(f"连接器已解压: {connector_dir}")
         return connector_dir
     
-    try:
-        logger.info(f"解压连接器到: {build_dir}")
-        cmd = f"tar -xzf {connector_path} -C {build_dir}"
-        subprocess.run(cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # 验证下载文件
+    if not os.path.exists(connector_path) or os.path.getsize(connector_path) == 0:
+        logger.error(f"下载的文件无效或不存在: {connector_path}")
+        return ""
         
-        if os.path.exists(connector_dir):
-            logger.info(f"连接器解压成功: {connector_dir}")
-            return connector_dir
-        else:
-            logger.error(f"连接器解压后目录不存在: {connector_dir}")
+    try:
+        # 在解压前验证tar文件
+        logger.info(f"验证tar文件完整性: {connector_path}")
+        verify_cmd = f"tar -tf {connector_path} > /dev/null"
+        try:
+            subprocess.run(verify_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"文件损坏或不是有效的tar归档文件: {e}")
+            # 删除损坏的文件
+            os.remove(connector_path)
             return ""
+        
+        logger.info(f"解压连接器到: {build_dir}")
+        # 使用verbose模式后重定向到文件，以便排错
+        cmd = f"tar -xvzf {connector_path} -C {build_dir} > {build_dir}/extract.log 2>&1"
+        subprocess.run(cmd, shell=True, check=True)
+        
+        # 输出解压结果
+        logger.info(f"连接器解压输出:")
+        try:
+            with open(f"{build_dir}/extract.log", "r") as f:
+                extract_output = f.read()
+                logger.info(extract_output)
+        except Exception as e:
+            logger.warning(f"无法读取解压日志: {e}")
+        
+        # 验证目录存在
+        if os.path.exists(connector_dir):
+            # 验证目录内容
+            files_in_dir = os.listdir(connector_dir)
+            if files_in_dir:
+                logger.info(f"连接器解压成功: {connector_dir}, 文件数: {len(files_in_dir)}")
+                return connector_dir
+            else:
+                logger.error(f"连接器解压后目录为空: {connector_dir}")
+                return ""
+        else:
+            # 尝试检查目录是否使用了不同的命名格式
+            potential_dirs = [f for f in os.listdir(build_dir) if os.path.isdir(os.path.join(build_dir, f)) and 'modsecurity' in f.lower() and 'nginx' in f.lower()]
+            
+            if potential_dirs:
+                alt_dir = os.path.join(build_dir, potential_dirs[0])
+                logger.warning(f"找到替代目录: {alt_dir}，使用该目录代替预期的 {connector_dir}")
+                return alt_dir
+            else:
+                logger.error(f"连接器解压后目录不存在: {connector_dir}")
+                # 列出所有解压出的目录信息以便调试
+                logger.info(f"build_dir中的内容: {os.listdir(build_dir)}")
+                return ""
     except subprocess.CalledProcessError as e:
         logger.error(f"解压连接器失败: {e}")
+        return ""
+    except Exception as e:
+        logger.error(f"处理连接器时发生未知错误: {e}")
         return ""
 
 def get_nginx_compile_options(nginx_binary):
@@ -225,7 +295,7 @@ def build_nginx_module(build_dir, connector_dir, modsec_dir, verbose=False):
         os.chdir(nginx_src_dir)
         
         # 准备编译命令
-        configure_cmd = "./configure"
+        configure_cmd = f"./configure --prefix={nginx_path}"
         
         # 添加Nginx原始编译选项
         # 特别处理 --add-dynamic-module 和 --add-module 选项，这些可能不应该出现在新的配置中
@@ -235,7 +305,10 @@ def build_nginx_module(build_dir, connector_dir, modsec_dir, verbose=False):
             if value is True:
                 configure_cmd += f" --{key}"
             else:
-                configure_cmd += f" --{key}={value}"
+                if key.startswith("--"):
+                    configure_cmd += f" {key}={value}"
+                else:
+                    configure_cmd += f" --{key}={value}"
         
         # 添加ModSecurity模块
         configure_cmd += f" --add-dynamic-module={connector_dir}"
@@ -452,7 +525,11 @@ def install_nginx_modsecurity(build_dir, modsec_dir, verbose=False):
 # 如果直接运行此脚本，则执行测试
 if __name__ == "__main__":
     import tempfile
-    from modules.constants import setup_logger
+    try:
+        from modules.constants import setup_logger
+    except ImportError as e:
+        logging.error(f"导入模块时出错: {e}")
+        sys.exit(1)
     
     # 设置日志
     logger = setup_logger()

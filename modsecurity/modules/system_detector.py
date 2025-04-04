@@ -9,11 +9,16 @@ import os
 import re
 import subprocess
 import logging
+import sys
 import time
 from datetime import datetime
 
 # 导入常量模块
-from modules.constants import CENTOS_EOL_VERSIONS
+try:
+    from modules.constants import CENTOS_EOL_VERSIONS
+except ImportError as e:
+    logging.error(f"导入模块时出错: {e}")
+    sys.exit(1)
 
 logger = logging.getLogger('modsecurity_installer')
 
@@ -206,8 +211,12 @@ def system_info_summary():
 # 如果直接运行此脚本，则输出系统信息
 if __name__ == "__main__":
     import json
-    from modules.constants import setup_logger
-    
+    try:
+        from modules.constants import setup_logger
+    except ImportError as e:
+        logging.error(f"导入模块时出错: {e}")
+        sys.exit(1)
+
     # 设置日志
     logger = setup_logger()
     

@@ -37,10 +37,15 @@ PHP安全扫描器可以递归扫描指定目录中的所有PHP文件，检测�
 
 ModSecurity安装工具可以在安装了宝塔面板和Nginx的Linux服务器上自动安装和配置ModSecurity Web应用防火墙，特点包括：
 
-- 支持多种Linux发行版（CentOS, Ubuntu等）
-- 优先使用Gitee镜像源，适合国内服务器
-- 自动安装OWASP核心规则集(CRS)
-- 防范常见Web攻击：SQL注入、XSS、CSRF等
+- **模块化设计**：完全重构的架构，提供更好的可维护性和扩展性
+- **多平台支持**：兼容CentOS 7/8/9、Ubuntu 20.04/22.04、Debian 10/11等多种系统
+- **CentOS 7 EOL特别支持**：自动处理软件源问题，使用vault归档镜像
+- **增强Git仓库管理**：智能文件复制和子模块状态检测机制
+- **多源下载机制**：优先使用Gitee镜像源，失败时自动切换到GitHub
+- **流程容错**：完善的错误处理和故障恢复机制
+- **智能缓存系统**：减少重复下载，增强工作效率
+
+最近更新：优化了ModSecurity-Nginx连接器的下载机制，实现了URL故障转移，并增强了不同源解压目录的兼容性处理。
 
 详细使用方法请查看 [ModSecurity安装工具文档](modsecurity/README.md)。
 

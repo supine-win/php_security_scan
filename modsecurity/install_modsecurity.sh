@@ -34,9 +34,14 @@ FILES=(
     "modules/repo_manager.py"
     "modules/repo_manager_ext.py"
     "modules/dependency_installer.py"
-    "modules/modsecurity_compiler.py"
+    "modules/downloader.py"
+    "modules/archive_handler.py"
+    "modules/git_manager.py"
+    "modules/modsecurity_builder.py"
+    "modules/modules_manager.py"
     "modules/nginx_integrator.py"
     "modules/config_manager.py"
+    "modules/cache_manager.py"
 )
 
 # 下载源选项

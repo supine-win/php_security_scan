@@ -2,6 +2,20 @@
 
 这个模块化脚本用于在Linux服务器上自动安装和配置ModSecurity Web应用防火墙，支持同时安装在宝塔面板和标准Nginx环境。脚本采用模块化设计，优先使用国内镜像源，特别优化了对CentOS 7 EOL环境的支持。
 
+## 前提条件
+
+- 注册gitee.com
+- 服务器git设置你的用户名和邮箱
+```bash
+git config --global user.name "Your Name"
+git config --global user.email "your_email@example.com"
+```
+- 设置git存储
+```bash
+git config --global credential.helper store
+```
+> **脚本执行期间可能会多次提示输入GitHub/Gitee的用户名和密码**，请直接输入, 若想静默建议使用SSH密钥或GitHub/Gitee的个人访问令牌（PAT）进行身份验证。
+
 ## 支持的操作系统
 
 - CentOS 7/8/9
@@ -21,6 +35,10 @@
   - 自动检测并修复软件源配置问题
   - 针对CentOS EOL版本使用vault归档镜像
   - 在网络问题时自动切换到国内镜像源
+- **增强的错误处理与容错**：
+  - 所有模块导入使用try-except结构，确保安装流程不会因单个模块问题中断
+  - Git仓库递归克隆，同时获取所有子模块
+  - 针对浅克隆仓库的优化，使缓存更可靠
 - **全面安全功能**：
   - 自动安装OWASP ModSecurity核心规则集(CRS)
   - 防范SQL注入、XSS、CSRF、文件包含等攻击
@@ -29,6 +47,27 @@
   - 提供彩色输出和详细安装日志
   - 智能错误处理和问题诊断
   - 安装完成后自动重启Nginx服务
+
+## 缓存系统
+
+脚本集成了智能缓存系统，可显著提高安装速度并降低网络负载：
+
+- **缓存结构**：所有下载文件按类型/版本/文件名目录结构存储
+- **递归Git仓库缓存**：
+  - 使用`--recursive`模式自动克隆主仓库及全部子模块
+  - 使用适当的浅历史深度，减少内存占用且不影响功能
+  - 防止浅克隆导致的缓存问题
+- **智能文件缓存**：Nginx源码包等文件下载后自动缓存，支持断点续传
+- **容错设计**：缓存出错时会自动回退到直接下载模式
+- **默认安全**：缓存在`~/.modsecurity_cache`目录，不影响系统文件
+- **智能校验**：基于版本缓存，自动检测更新
+
+特别适合以下场景：
+
+1. **网络不稳定环境**：网络经常中断的服务器可以利用缓存系统减少重复下载
+2. **低速网络**：网络带宽受限的环境只需要下载一次即可
+3. **批量部署**：需要在多台服务器上部署ModSecurity时，可先预热缓存或复用缓存目录
+4. **产品环境**：在无法直接连接外网的服务器上，可以预先准备缓存文件
 
 ## 使用方法
 
@@ -85,8 +124,17 @@ chmod +x install_modsecurity.sh
 # 或者简写形式
 ./install_modsecurity.sh -r
 
+# 指定自定义缓存目录（默认为~/.modsecurity_cache）
+./install_modsecurity.sh --cache-dir=/path/to/cache
+
+# 禁用缓存功能，始终从源站下载
+./install_modsecurity.sh --no-cache
+
+# 清除缓存目录并重新下载所有文件
+./install_modsecurity.sh --clear-cache
+
 # 可以组合使用多个参数
-./install_modsecurity.sh -f -v -r
+./install_modsecurity.sh -f -v -r --cache-dir=/data/modsec_cache
 ```
 
 如果使用一键安装脚本，您可以如下传递参数：
@@ -134,10 +182,39 @@ modsecurity/
     ├── repo_manager.py       # 软件源管理基础模块
     ├── repo_manager_ext.py   # 软件源管理扩展模块（CentOS EOL支持）
     ├── dependency_installer.py # 依赖安装模块
-    ├── modsecurity_compiler.py # ModSecurity编译模块
+    ├── downloader.py         # 文件下载模块
+    ├── archive_handler.py    # 归档文件处理模块
+    ├── git_manager.py        # Git仓库管理模块（递归克隆支持）
+    ├── modsecurity_builder.py # ModSecurity构建模块
+    ├── modules_manager.py    # 模块管理模块
     ├── nginx_integrator.py   # Nginx集成模块
     └── config_manager.py     # 配置管理模块
 ```
+
+### 关键技术改进
+
+1. **增强的错误处理机制**
+   - 所有模块导入使用try-except结构，确保脚本健壮性
+   - 关键模块导入失败时会提供明确的错误信息并优雅退出
+   - 各组件间松耦合设计，降低单点故障风险
+
+2. **Git仓库管理增强**
+   - 使用`--recursive`参数一次性克隆主仓库及所有子模块
+   - 浅克隆深度从1调整为2，平衡网络传输效率和功能完整性
+   - 智能文件复制替代本地克隆，解决浅克隆仓库不支持`--local`参数的问题
+   - 更智能化的子模块管理，自动检测子模块状态避免重复初始化
+   - 主动将已初始化子模块的仓库备份到缓存，提高缓存效率
+
+3. **网络资源获取增强**
+   - ModSecurity-Nginx连接器下载支持多源切换，首选Gitee源
+   - 实现URL故障转移机制，当主源失败自动切换到备用源
+   - 增强的归档文件完整性验证，自动处理损坏文件
+   - 智能目录检测，自动识别不同源解压的目录结构差异
+
+4. **简化的安装流程**
+   - 模块化设计降低维护难度，每个模块可独立测试
+   - 错误处理更加完善，安装过程更可靠
+   - 递归克隆减少了多步操作，提高效率
 
 ## 特殊环境支持
 
@@ -145,10 +222,20 @@ modsecurity/
 
 本脚本特别优化了对CentOS 7 EOL环境的支持：
 
-- 自动检测CentOS 7 EOL状态
-- 使用centos-vault归档镜像替代常规镜像
-- 自动修复"Could not retrieve mirrorlist"和"Cannot find a valid baseurl"错误
-- 支持多个国内镜像源，确保依赖安装稳定性
+- **主动预检查机制**
+  - 在安装前主动检测软件源配置状态
+  - 自动检测"Could not retrieve mirrorlist"和"Cannot find a valid baseurl"等错误
+  - 当检测到软件源问题时直接修复，无需等待安装失败
+
+- **专用归档镜像配置**
+  - 使用centos-vault归档镜像替代已经无法访问的常规镜像
+  - 硬编码使用7.9.2009版本的归档镜像，这是CentOS 7的最终版本
+  - 针对阿里云和清华大学等国内镜像源进行了优化配置
+
+- **强化的错误处理**
+  - 完善的备份/恢复机制，确保软件源配置文件的安全
+  - 添加了EPEL仓库配置，确保关键依赖如GeoIP的安装
+  - 实现了两阶段安装：先尝试官方源，失败后直接尝试国内镜像源
 
 ### 网络受限环境
 
@@ -164,52 +251,3 @@ modsecurity/
 
 - 自动检测宝塔面板并使用正确的配置路径
 - 兼容宝塔面板的Nginx配置结构
-- 支持同时安装在多环境中
-
-## 安装细节
-
-脚本安装的组件包括：
-- ModSecurity核心库 v3.0.8
-- ModSecurity-nginx连接器 v1.0.3
-- OWASP ModSecurity核心规则集(CRS) v3.3.4
-- Nginx集成配置
-
-安装位置：
-- ModSecurity模块：标准环境为`/etc/nginx/modules/ngx_http_modsecurity_module.so`，宝塔环境为`/www/server/nginx/modules/ngx_http_modsecurity_module.so`
-- 规则配置目录：`/etc/nginx/modsecurity/`（标准环境）或`/www/server/nginx/conf/modsecurity/`（宝塔环境）
-- OWASP CRS规则：`/etc/nginx/modsecurity-crs/`（标准环境）或`/www/server/nginx/conf/modsecurity-crs/`（宝塔环境）
-- Nginx配置：`/etc/nginx/conf.d/modsecurity.conf`（标准环境）或`/www/server/panel/vhost/nginx/modsecurity.conf`（宝塔环境）
-
-## 调整和故障排除
-
-### 常规调整
-
-如需调整规则，请编辑：`/etc/nginx/modsecurity/modsecurity.conf`或宝塔环境下的对应文件
-
-详细安装日志位于：`/var/log/modsecurity_install.log`
-
-### 软件源问题
-
-如果在CentOS系统遇到软件源问题，可以尝试以下命令：
-
-```bash
-./install_modsecurity.sh --fix-repo --verbose
-```
-
-### 依赖问题
-
-如果特定依赖无法安装，可以查看日志确定缺失的依赖，然后手动安装：
-
-```bash
-# CentOS系统
-yum install -y <依赖包名>
-
-# Debian/Ubuntu系统
-apt-get install -y <依赖包名>
-```
-
-然后使用`--skip-deps`选项继续安装：
-
-```bash
-./install_modsecurity.sh --skip-deps
-```

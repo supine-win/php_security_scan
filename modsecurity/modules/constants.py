@@ -10,14 +10,19 @@ import sys
 import logging
 
 # 版本信息
-MODSEC_VERSION = "3.0.8"
+MODSEC_VERSION = "3.0.14"
 MODSEC_CONNECTOR_VERSION = "1.0.3"
-NGINX_VERSION = "1.22.1"  # 默认Nginx版本
-OWASP_CRS_VERSION = "3.3.4"
+NGINX_VERSION = "1.24.0"  # 默认Nginx版本
+OWASP_CRS_VERSION = "4.13.0"
 
 # 目录设置
 DEFAULT_BUILD_DIR = "/tmp/modsecurity_build"
 DEFAULT_LOG_FILE = "modsecurity_install.log"
+
+# 缓存设置
+DEFAULT_CACHE_DIR = os.path.expanduser("~/.modsecurity_cache")
+CACHE_GIT_DIR = os.path.join(DEFAULT_CACHE_DIR, "git")  # Git仓库缓存目录
+CACHE_FILE_DIR = os.path.join(DEFAULT_CACHE_DIR, "files")  # 文件缓存目录
 
 # 宝塔面板路径
 BT_NGINX_PATH = "/www/server/nginx"
@@ -29,9 +34,29 @@ STD_CONF_PATH = "/etc/nginx/conf.d"
 
 # 下载链接
 MODSEC_DOWNLOAD_URL = f"https://github.com/SpiderLabs/ModSecurity/releases/download/v{MODSEC_VERSION}/modsecurity-v{MODSEC_VERSION}.tar.gz"
-MODSEC_CONNECTOR_URL = f"https://github.com/SpiderLabs/ModSecurity-nginx/releases/download/v{MODSEC_CONNECTOR_VERSION}/modsecurity-nginx-v{MODSEC_CONNECTOR_VERSION}.tar.gz"
+# 提供两个连接器下载链接，中国服务器建议使用Gitee
+# Gitee镜像版本
+MODSEC_CONNECTOR_GITEE_URL = f"https://gitee.com/supine-win/ModSecurity-nginx/archive/refs/tags/modsecurity-nginx-v{MODSEC_CONNECTOR_VERSION}.tar.gz"
+# GitHub原始版本
+MODSEC_CONNECTOR_GITHUB_URL = f"https://github.com/SpiderLabs/ModSecurity-nginx/releases/download/v{MODSEC_CONNECTOR_VERSION}/modsecurity-nginx-v{MODSEC_CONNECTOR_VERSION}.tar.gz"
+# 默认使用Gitee版本
+MODSEC_CONNECTOR_URL = MODSEC_CONNECTOR_GITEE_URL
 OWASP_CRS_URL = f"https://github.com/coreruleset/coreruleset/archive/v{OWASP_CRS_VERSION}.tar.gz"
 NGINX_DOWNLOAD_URL = f"https://nginx.org/download/nginx-{NGINX_VERSION}.tar.gz"
+
+# Git仓库链接
+GIT_REPOS = {
+    "github": {
+        "modsecurity": "https://github.com/SpiderLabs/ModSecurity.git",
+        "connector": "https://github.com/owasp-modsecurity/ModSecurity-nginx.git",
+        "crs": "https://github.com/coreruleset/coreruleset.git"
+    },
+    "gitee": {
+        "modsecurity": "https://gitee.com/supine-win/ModSecurity.git",
+        "connector": "https://gitee.com/supine-win/ModSecurity-nginx.git",
+        "crs": "https://gitee.com/supine-win/coreruleset.git"
+    }
+}
 
 # 工作目录
 WORK_DIR = "/tmp/modsecurity_build"
@@ -62,11 +87,11 @@ CENTOS_EOL_VERSIONS = {
 DEPENDENCIES = {
     "rhel": [
         "git", "gcc", "gcc-c++", "make", "automake", "autoconf", "libtool",
-        "pcre-devel", "libxml2-devel", "curl-devel", "zlib-devel",
+        "pcre-devel", "pcre2-devel", "libxml2-devel", "curl-devel", "zlib-devel",
         "GeoIP-devel", "yajl-devel", "doxygen", "lmdb-devel"
     ],
     "debian": [
-        "git", "build-essential", "libpcre3-dev", "libxml2-dev", "libcurl4-openssl-dev",
+        "git", "build-essential", "libpcre3-dev", "libpcre2-dev", "libxml2-dev", "libcurl4-openssl-dev",
         "zlib1g-dev", "libyajl-dev", "doxygen", "liblmdb-dev", "liblua5.2-dev"
     ]
 }

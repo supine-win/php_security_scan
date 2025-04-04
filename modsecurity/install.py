@@ -17,11 +17,12 @@ from pathlib import Path
 
 # 导入模块
 try:
-    from modules.constants import setup_logger, WORK_DIR
+    from modules.constants import setup_logger, WORK_DIR, NGINX_VERSION
     from modules.system_detector import detect_os, system_info_summary
     from modules.repo_manager_ext import check_and_fix_repo_config
     from modules.dependency_installer import install_system_dependencies, init_repo_cache
-    from modules.modsecurity_compiler import download_and_build_modsecurity
+    from modules.modsecurity_builder import download_and_build_modsecurity
+    from modules.modules_manager import download_modules, configure_modules
     from modules.nginx_integrator import install_nginx_modsecurity
     from modules.config_manager import configure_modsecurity
 except ImportError as e:
@@ -80,8 +81,17 @@ def parse_arguments():
     parser.add_argument('--verbose', '-v', action='store_true', help='输出详细日志')
     parser.add_argument('--force', '-f', action='store_true', help='强制安装，跳过所有确认')
     parser.add_argument('--fix-repo', '-r', action='store_true', help='自动修复软件源问题（针对CentOS EOL版本）')
+    parser.add_argument('--use-gitee', action='store_true', default=True, help='使用Gitee镜像克隆代码（推荐中国环境使用）')
+    parser.add_argument('--no-gitee', action='store_true', help='不使用Gitee镜像，直接从GitHub下载')
     parser.add_argument('--work-dir', type=str, default=WORK_DIR, help=f'工作目录，默认为{WORK_DIR}')
     parser.add_argument('--log-file', type=str, default=None, help='日志文件路径')
+    
+    # 缓存相关参数
+    from modules.constants import DEFAULT_CACHE_DIR
+    parser.add_argument('--cache-dir', type=str, default=DEFAULT_CACHE_DIR, help=f'设置缓存目录，默认为{DEFAULT_CACHE_DIR}')
+    parser.add_argument('--use-cache', action='store_true', default=True, help='使用缓存减少重复下载（默认启用）')
+    parser.add_argument('--no-cache', action='store_true', help='禁用缓存，始终从源站下载')
+    parser.add_argument('--clear-cache', action='store_true', help='清除缓存目录并重新下载')
     
     return parser.parse_args()
 
@@ -151,6 +161,24 @@ def main():
     else:
         logger.info("跳过软件源检查")
     
+    # 处理缓存相关选项
+    from modules.cache_manager import setup_cache_dir, clear_cache
+    
+    # 设置缓存目录
+    cache_dir = args.cache_dir
+    use_cache = args.use_cache and not args.no_cache
+    
+    if args.clear_cache:
+        logger.info(f"清除缓存目录: {cache_dir}")
+        clear_cache(cache_dir)
+        # 清除后仍然使用缓存，只是重新创建
+    
+    if use_cache:
+        logger.info(f"使用缓存目录: {cache_dir}")
+        setup_cache_dir(cache_dir)
+    else:
+        logger.info("缓存已禁用，将从源站直接下载所有文件")
+    
     # 确保工作目录存在
     work_dir = args.work_dir
     os.makedirs(work_dir, exist_ok=True)
@@ -165,15 +193,33 @@ def main():
     else:
         logger.info("跳过依赖安装")
     
+    # 决定是否使用Gitee克隆
+    use_gitee = args.use_gitee and not args.no_gitee
+    if use_gitee:
+        logger.info("使用Gitee镜像克隆代码，适合中国网络环境")
+    else:
+        logger.info("使用GitHub原始仓库下载代码")
+    
     # 下载和构建ModSecurity
     logger.info("下载和构建ModSecurity...")
-    if not download_and_build_modsecurity(work_dir, args.verbose):
+    if not download_and_build_modsecurity(work_dir, args.verbose, use_gitee=use_gitee, 
+                                      use_cache=use_cache, cache_dir=cache_dir):
         logger.error("ModSecurity构建失败，无法继续")
+        return 1
+    
+    # 下载所有需要的模块
+    logger.info("下载模块和依赖组件...")
+    from modules.constants import NGINX_VERSION
+    modules_result = download_modules(work_dir, NGINX_VERSION, args.verbose, use_gitee=use_gitee,
+                                  use_cache=use_cache, cache_dir=cache_dir)
+    if not modules_result["success"]:
+        logger.error(f"下载组件失败: {modules_result['message']}")
         return 1
     
     # 安装ModSecurity-Nginx连接器
     logger.info("安装ModSecurity-Nginx连接器...")
     modsec_dir = os.path.join(work_dir, "ModSecurity")
+    connector_dir = modules_result["connector_dir"]
     if not install_nginx_modsecurity(work_dir, modsec_dir, args.verbose):
         logger.error("ModSecurity-Nginx连接器安装失败，无法继续")
         return 1

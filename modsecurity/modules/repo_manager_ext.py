@@ -10,12 +10,17 @@ import re
 import shutil
 import subprocess
 import logging
+import sys
 import time
 from pathlib import Path
 
 # 导入相关模块
-from modules.system_detector import detect_os, is_centos_eol, get_centos_version
-from modules.constants import MIRRORS, CENTOS_EOL_VERSIONS
+try:
+    from modules.system_detector import detect_os, is_centos_eol, get_centos_version
+    from modules.constants import MIRRORS, CENTOS_EOL_VERSIONS
+except ImportError as e:
+    logging.error(f"导入模块时出错: {e}")
+    sys.exit(1)
 
 logger = logging.getLogger('modsecurity_installer')
 

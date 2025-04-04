@@ -11,11 +11,16 @@ import shutil
 import subprocess
 import logging
 import glob
+import sys
 from pathlib import Path
 
 # 导入相关模块
-from modules.constants import CLAMAV_CONFIG, MODSEC_DEFAULT_CONFIG
-from modules.system_detector import detect_bt_panel
+try:
+    from modules.constants import CLAMAV_CONFIG, MODSEC_DEFAULT_CONFIG
+    from modules.system_detector import detect_bt_panel
+except ImportError as e:
+    logging.error(f"导入模块时出错: {e}")
+    sys.exit(1)
 
 logger = logging.getLogger('modsecurity_installer')
 
@@ -320,7 +325,11 @@ def configure_modsecurity(build_dir):
 
 # 如果直接运行此脚本，则执行测试
 if __name__ == "__main__":
-    from modules.constants import setup_logger
+    try:
+        from modules.constants import setup_logger
+    except ImportError as e:
+        print(f"导入模块时出错: {e}")
+        sys.exit(1)
     
     # 设置日志
     logger = setup_logger()

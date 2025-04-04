@@ -12,9 +12,13 @@ import logging
 import time
 
 # 导入相关模块
-from modules.constants import DEPENDENCIES
-from modules.system_detector import detect_os
-from modules.repo_manager_ext import test_yum_repo, fix_centos_yum_mirrors
+try:
+    from modules.constants import DEPENDENCIES
+    from modules.system_detector import detect_os
+    from modules.repo_manager_ext import test_yum_repo, fix_centos_yum_mirrors
+except ImportError as e:
+    logging.error(f"导入模块时出错: {e}")
+    sys.exit(1)
 
 logger = logging.getLogger('modsecurity_installer')
 
@@ -212,30 +216,57 @@ def clean_yum_transactions():
     """
     logger.info("检查并清理YUM未完成的事务...")
     
-    # 检查yum-utils是否安装
     try:
         # 安装yum-utils包
-        subprocess.run("yum install -y yum-utils", shell=True, check=True, 
+        logger.info("安装 yum-utils 工具包...")
+        subprocess.run("yum install -y yum-utils", shell=True, check=False, 
                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
-        # 尝试清理未完成的事务
-        logger.info("运行 yum-complete-transaction --cleanup-only")
-        subprocess.run("yum-complete-transaction --cleanup-only", shell=True, check=False,
-                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # 清理YUM缓存和相关环境 - 非常强力的清理方式
+        cleanup_commands = [
+            "yum-complete-transaction --cleanup-only",
+            "yum history new",  # 创建新的历史事务
+            "yum clean all",     # 清理所有缓存
+            "rm -f /var/lib/rpm/__db*",  # 清除RPM数据库锁
+            "rpm --rebuilddb",   # 重建 RPM数据库
+            "yum makecache"      # 重建缓存
+        ]
         
-        # 尝试清理过期的缓存
-        logger.info("运行 yum clean all")
-        subprocess.run("yum clean all", shell=True, check=False,
-                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
-        # 重建缓存
-        logger.info("重建 YUM 缓存")
-        subprocess.run("yum makecache", shell=True, check=False,
-                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        for cmd in cleanup_commands:
+            logger.info(f"运行: {cmd}")
+            try:
+                subprocess.run(cmd, shell=True, check=False,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+            except Exception as subcmd_err:
+                logger.warning(f"运行{cmd}时发生错误: {subcmd_err}")
+                # 继续尝试其他命令，不返回错误
         
         return True
     except Exception as e:
         logger.warning(f"清理YUM事务时发生错误: {e}")
+        return False
+
+def install_single_package(package_name, os_type="rhel"):
+    """尝试安装单个软件包
+    
+    Args:
+        package_name (str): 要安装的包名称
+        os_type (str): 操作系统类型 ('rhel' 或 'debian')
+        
+    Returns:
+        bool: 是否成功安装
+    """
+    try:
+        if os_type == 'rhel':
+            cmd = f"yum install -y --skip-broken {package_name}"
+        else:
+            cmd = f"apt-get install -y {package_name}"
+            
+        subprocess.run(cmd, shell=True, check=True,
+                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+        return True
+    except Exception as e:
+        logger.warning(f"安装{package_name}失败: {e}")
         return False
 
 def install_system_dependencies():
@@ -247,63 +278,101 @@ def install_system_dependencies():
     os_type, os_version = detect_os()
     
     # 先检查和修复软件源配置
-    if os_type == 'rhel' and not check_and_fix_dependency_repos(os_version):
-        logger.warning("软件源配置问题无法自动修复，将尝试继续安装，但可能会失败")
+    if os_type == 'rhel':
+        logger.info("修复软件源配置...")
+        fix_centos_yum_mirrors()
+        # 无论成功与否都继续
     
     # 初始化软件源缓存
     init_repo_cache()
     
-    # 对于CentOS/RHEL，先清理未完成的YUM事务
+    # 对于CentOS/RHEL，强制清理事务
     if os_type == 'rhel':
+        logger.info("强制清理YUM状态...")
         clean_yum_transactions()
     
     # 对于CentOS/RHEL，安装EPEL仓库
     if os_type == 'rhel':
-        if not install_epel_repo(os_version):
-            logger.warning("安装EPEL仓库失败，部分依赖可能无法安装")
+        install_epel_repo(os_version) # 即使失败也继续
+        
+        # 检查GCC版本，如果过低则安装新版本
+        # 尤其是CentOS 7上默认GCC 4.8.5不支持C++11/14特性
+        logger.info("检查GCC版本...")
+        try:
+            gcc_ver_cmd = "gcc --version | head -n1 | awk '{print $3}'"
+            gcc_version = subprocess.run(gcc_ver_cmd, shell=True, check=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode().strip()
+            
+            logger.info(f"检测到GCC版本: {gcc_version}")
+            # 如果是CentOS 7或者GCC版本过低，安装新版本
+            if os_version.startswith('7') or gcc_version.startswith('4.'):
+                logger.warning(f"GCC版本 {gcc_version} 太旧，不支持现代C++特性")
+                logger.info("安装新版本GCC编译器...")
+                install_newer_gcc('rhel')
+            else:
+                logger.info(f"GCC版本 {gcc_version} 已满足要求")
+        except Exception as e:
+            logger.warning(f"检查GCC版本失败: {e}，将安装新版本")
+            install_newer_gcc('rhel')
     
-    # 根据系统类型安装依赖
+    # 使用强化的包安装方法
     if os_type in DEPENDENCIES:
         deps = DEPENDENCIES.get(os_type, [])
-        deps_str = " ".join(deps)
         
-        try:
-            if os_type == 'rhel':
-                logger.info(f"安装CentOS/RHEL依赖: {deps_str}")
-                cmd = f"yum install -y {deps_str}"
-                subprocess.run(cmd, shell=True, check=True)
-            elif os_type == 'debian':
-                logger.info(f"安装Debian/Ubuntu依赖: {deps_str}")
-                cmd = f"apt install -y {deps_str}"
-                subprocess.run(cmd, shell=True, check=True)
+        # 采用逻个安装策略，避免YUM事务问题
+        if os_type == 'rhel':
+            logger.info("采用逐个安装策略，最大限度避免YUM事务冲突...")
             
-            logger.info("所有系统依赖安装完成")
-            return True
-        except subprocess.CalledProcessError as e:
-            logger.error(f"安装系统依赖失败: {e}")
-            # 如果安装失败，可能是未完成的事务或软件源问题
-            if os_type == 'rhel':
-                # 先尝试清理事务
-                logger.info("尝试清理YUM事务并重试...")
-                clean_yum_transactions()
+            # 先检查已有依赖
+            success_count = 0
+            total_deps = len(deps)
+            
+            for pkg in deps:
+                # 检查包是否已安装
+                check_cmd = f"rpm -q {pkg.split()[0]} 2>/dev/null || echo 'not installed'"
+                result = subprocess.run(check_cmd, shell=True, stdout=subprocess.PIPE).stdout.decode('utf-8').strip()
                 
-                try:
-                    # 使用 --skip-broken 跳过有问题的包
-                    cmd = f"yum install -y --skip-broken {deps_str}"
-                    subprocess.run(cmd, shell=True, check=True)
-                    logger.info("依赖安装成功(跳过问题包)")
-                    return True
-                except subprocess.CalledProcessError:
-                    # 如果还是失败，尝试修复软件源
-                    if fix_centos_yum_mirrors():
-                        logger.info("已修复软件源，重新尝试安装依赖")
-                        try:
-                            cmd = f"yum install -y --skip-broken {deps_str}"
-                            subprocess.run(cmd, shell=True, check=True)
-                            logger.info("依赖安装成功")
-                            return True
-                        except subprocess.CalledProcessError as e:
-                            logger.error(f"再次尝试安装依赖失败: {e}")
+                if 'not installed' in result:
+                    logger.info(f"安装依赖: {pkg}")
+                    if install_single_package(pkg, os_type):
+                        success_count += 1
+                    # 不要中断安装过程，继续下一个包
+                else:
+                    logger.info(f"包 {pkg} 已安装，跳过")
+                    success_count += 1
+                    
+                # 在每个包安装后清理缓存
+                subprocess.run("yum clean all", shell=True, check=False, 
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            # 最后一次尝试批量安装任何尚未安装的包
+            logger.info("最后一次检查所有依赖包...")
+            try:
+                # 使用--skip-broken的可能性大一些
+                deps_str = " ".join(deps)
+                cmd = f"yum install -y --skip-broken {deps_str}"
+                subprocess.run(cmd, shell=True, check=False,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
+            except Exception as final_e:
+                logger.warning(f"最终依赖检查时发生错误: {final_e}")
+                
+            success_rate = (success_count / total_deps) * 100
+            logger.info(f"依赖安装既成: {success_count}/{total_deps} ({success_rate:.1f}%)")
+            
+            # 只要大部分关键包安装成功就认为安装成功
+            return success_count >= (total_deps * 0.8)
+            
+        elif os_type == 'debian':
+            logger.info(f"安装Debian/Ubuntu依赖...")
+            try:
+                deps_str = " ".join(deps)
+                cmd = f"apt-get update && apt-get install -y {deps_str}"
+                subprocess.run(cmd, shell=True, check=True)
+                logger.info("依赖安装成功")
+                return True
+            except Exception as e:
+                logger.error(f"安装依赖失败: {e}")
+                return False
             return False
     else:
         logger.warning(f"不支持的系统类型: {os_type}，跳过依赖安装")
@@ -311,7 +380,11 @@ def install_system_dependencies():
 
 # 如果直接运行此脚本，则执行测试
 if __name__ == "__main__":
-    from modules.constants import setup_logger
+    try:
+        from modules.constants import setup_logger
+    except ImportError as e:
+        print(f"导入模块时出错: {e}")
+        sys.exit(1)
     
     # 设置日志
     logger = setup_logger()
